@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Simple updater/runner for statok-agent.
+# Pulls latest code, builds the binary, and runs it in the foreground.
+
+pkill ssh-agent
+eval $(ssh-agent -s)
+ssh-add ~/.ssh/github
+
+set -euo pipefail
+
+APP_DIR="${APP_DIR:-$(pwd)}"
+MAIN_PKG="${MAIN_PKG:-./cmd/statok-hostmetrics}"
+OUTPUT="${OUTPUT:-./statok-agent}"
+STATOK_HOST="${STATOK_HOST:-statok.dev0101.xyz}"
+GOFLAGS="${GOFLAGS:--buildvcs=false}"
+
+cd "${APP_DIR}"
+
+echo "[statok-agent] git pull"
+git pull --ff-only
+
+echo "[statok-agent] building ${OUTPUT} from ${MAIN_PKG}"
+GOFLAGS="${GOFLAGS}" go build -o "${OUTPUT}" "${MAIN_PKG}"
+
+echo "[statok-agent] running ${OUTPUT} (Ctrl+C to stop)"
+STATOK_HOST="${STATOK_HOST}" exec "${OUTPUT}"
