@@ -38,6 +38,7 @@ type Config struct {
 	Endpoint          string
 	Transport         Transport
 	Logger            Logger
+	Verbose           bool
 	QueueSize         int
 	MaxBatchSize      int
 	MaxSeriesPerBatch int

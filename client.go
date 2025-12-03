@@ -3,6 +3,9 @@ package statok
 import (
 	"context"
 	"errors"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -199,9 +202,83 @@ func (c *Client) flush(events []*event) {
 	if payload == nil {
 		return
 	}
+	if c.cfg.Verbose {
+		c.logFlushSummary(payload)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.FlushTimeout)
 	defer cancel()
 	if err := c.cfg.Transport.Send(ctx, payload); err != nil {
 		c.logger.Printf("statok: flush failed: %v", err)
 	}
+}
+
+func (c *Client) logFlushSummary(payload *Payload) {
+	if c.logger == nil || payload == nil {
+		return
+	}
+	cCounter := len(payload.Counters)
+	cValues := len(payload.Values)
+	metricCounters := countMetricsCounters(payload.Counters)
+	metricValues := countMetricsValues(payload.Values)
+	const maxMetricsToShow = 10
+	c.logger.Printf(
+		"statok: flushing %d events (counters=%d, values=%d); counter metrics: %s; value metrics: %s",
+		cCounter+cValues,
+		cCounter,
+		cValues,
+		summarizeMetricCounts(metricCounters, maxMetricsToShow),
+		summarizeMetricCounts(metricValues, maxMetricsToShow),
+	)
+}
+
+func countMetricsCounters(events []CounterEvent) map[string]int {
+	if len(events) == 0 {
+		return nil
+	}
+	counts := make(map[string]int, min(len(events), defaultMaxSeriesPerBatch))
+	for _, ev := range events {
+		counts[ev.Metric]++
+	}
+	return counts
+}
+
+func countMetricsValues(events []ValueEvent) map[string]int {
+	if len(events) == 0 {
+		return nil
+	}
+	counts := make(map[string]int, min(len(events), defaultMaxSeriesPerBatch))
+	for _, ev := range events {
+		counts[ev.Metric]++
+	}
+	return counts
+}
+
+func summarizeMetricCounts(counts map[string]int, limit int) string {
+	if len(counts) == 0 {
+		return "-"
+	}
+	keys := make([]string, 0, len(counts))
+	for k := range counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	if limit > 0 && len(keys) > limit {
+		keys = keys[:limit]
+	}
+	var sb strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(k)
+		sb.WriteString("=")
+		sb.WriteString(strconv.Itoa(counts[k]))
+	}
+	if limit > 0 && len(counts) > limit {
+		remaining := len(counts) - limit
+		sb.WriteString(", +")
+		sb.WriteString(strconv.Itoa(remaining))
+		sb.WriteString(" more")
+	}
+	return sb.String()
 }
