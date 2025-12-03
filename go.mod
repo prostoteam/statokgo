@@ -1,6 +1,6 @@
 module github.com/prostoteam/statokgo
 
-go 1.25.4
+go 1.25.1
 
 require (
 	github.com/go-ole/go-ole v1.2.6 // indirect
