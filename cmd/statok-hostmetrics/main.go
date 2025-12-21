@@ -17,7 +17,6 @@ import (
 
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
-	"github.com/shirou/gopsutil/v3/load"
 	"github.com/shirou/gopsutil/v3/mem"
 	gnet "github.com/shirou/gopsutil/v3/net"
 
@@ -86,7 +85,6 @@ func collectFast(ctx context.Context, host string) {
 			collectMem(host)
 			collectNet(host)
 			collectDiskIO(host)
-			collectCPULoad(host)
 			cpuUsage.Collect(host)
 		}
 	}
@@ -473,41 +471,6 @@ func hasTrailingDigit(s string) bool {
 	return last >= '0' && last <= '9'
 }
 
-func collectCPULoad(host string) {
-	hostLabel := statok.Label("host", host)
-
-	if runtime.GOOS != "linux" {
-		avg, err := load.Avg()
-		if err != nil {
-			log.Printf("collectCPULoad: load.Avg: %v", err)
-			return
-		}
-		statok.Value("host.cpu.load1", avg.Load1, hostLabel)
-		statok.Value("host.cpu.load5", avg.Load5, hostLabel)
-		statok.Value("host.cpu.load15", avg.Load15, hostLabel)
-		return
-	}
-
-	data, err := os.ReadFile("/proc/loadavg")
-	if err != nil {
-		log.Printf("collectCPULoad: read /proc/loadavg: %v", err)
-		return
-	}
-	fields := strings.Fields(string(data))
-	if len(fields) < 3 {
-		return
-	}
-	load1, err1 := strconv.ParseFloat(fields[0], 64)
-	load5, err2 := strconv.ParseFloat(fields[1], 64)
-	load15, err3 := strconv.ParseFloat(fields[2], 64)
-	if err1 != nil || err2 != nil || err3 != nil {
-		return
-	}
-	statok.Value("host.cpu.load1", load1, hostLabel)
-	statok.Value("host.cpu.load5", load5, hostLabel)
-	statok.Value("host.cpu.load15", load15, hostLabel)
-}
-
 type cpuTimes struct {
 	user      uint64
 	nice      uint64
@@ -545,6 +508,9 @@ func (c *cpuUsageCollector) Collect(host string) {
 	hostLabel := statok.Label("host", host)
 
 	for name, cur := range snapshot {
+		if name == "cpu" { // skip aggregate; only emit per-core series
+			continue
+		}
 		prev, ok := c.prev[name]
 		c.prev[name] = cur
 		if !ok {
