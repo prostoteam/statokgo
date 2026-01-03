@@ -4,21 +4,22 @@
 # Behavior:
 # - Uses system Go if present and >= GO_MIN_VERSION.
 # - Otherwise downloads a temporary Go toolchain (not persisted) used only for this build.
-# - Keeps Go build caches/module downloads in a temporary directory to avoid polluting user state.
+# - Keeps Go caches/module downloads in a temporary directory to avoid polluting user state.
 # - Idempotent: safe to run repeatedly. It does not start/stop any agent process or service.
-#
-# Optional runtime parameter support:
-# - If WORKLOAD is set or --workload/-w is provided, the post-install "Run:" hint includes it.
 
 set -euo pipefail
 IFS=$'\n\t'
 
 BIN_NAME="${BIN_NAME:-statok-agent}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
-GO_VERSION="${GO_VERSION:-1.25.4}"
+
+# If GO_VERSION is set and valid, we'll try it first; otherwise we auto-select latest stable.
+GO_VERSION="${GO_VERSION:-}"
 GO_MIN_VERSION="${GO_MIN_VERSION:-1.21.0}"
+
 STATOK_VERSION="${STATOK_VERSION:-latest}"
 GOFLAGS="${GOFLAGS:--buildvcs=false}"
+
 WORKLOAD="${WORKLOAD:-}"
 
 MODULE_PATH="github.com/prostoteam/statokgo/cmd/statok-hostmetrics"
@@ -29,13 +30,8 @@ err() {
   exit 1
 }
 
-need_cmd() {
-  command -v "$1" >/dev/null 2>&1 || err "missing required command: $1"
-}
-
-have_cmd() {
-  command -v "$1" >/dev/null 2>&1
-}
+need_cmd() { command -v "$1" >/dev/null 2>&1 || err "missing required command: $1"; }
+have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 usage() {
   cat <<EOF
@@ -64,21 +60,22 @@ download() {
 }
 
 version_ge() {
-  # Compare versions using sort -V (Linux GNU coreutils). Assumes semver-like strings.
   [ "$(printf '%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]
 }
 
+is_hex64() {
+  # POSIX-ish: use grep -E
+  printf '%s' "$1" | grep -Eq '^[0-9a-fA-F]{64}$'
+}
+
 sha256_calc() {
-  # Prints "<sha256>  <file>"
   local file="$1"
   if have_cmd sha256sum; then
-    sha256sum "$file"
+    sha256sum "$file" | awk '{print $1}'
   elif have_cmd shasum; then
-    shasum -a 256 "$file"
+    shasum -a 256 "$file" | awk '{print $1}'
   elif have_cmd openssl; then
-    local h
-    h="$(openssl dgst -sha256 "$file" | awk '{print $NF}')"
-    printf '%s  %s\n' "$h" "$file"
+    openssl dgst -sha256 "$file" | awk '{print $NF}'
   else
     err "need one of: sha256sum, shasum, or openssl (for checksum verification)"
   fi
@@ -123,38 +120,135 @@ use_system_go_if_ok() {
   return 1
 }
 
-setup_temp_go() {
-  # Downloads and unpacks Go into a temporary dir; exports GOROOT and PATH for the current process only.
-  need_cmd tar
-
-  local arch url tgz sha_url sha_file want_sha got_sha
-
+# Try to derive tarball + checksum for a specific version (GO_VERSION).
+# Outputs: "<url> <sha256>" to stdout on success.
+go_asset_for_version() {
+  local version="$1"
+  local arch url sha_url sha_file want_sha
   arch="$(ensure_linux_arch)"
-  tgz="$TMPDIR/go.tgz"
+
+  # Normalize: accept "1.22.3" or "go1.22.3"
+  version="${version#go}"
+  url="https://go.dev/dl/go${version}.linux-${arch}.tar.gz"
+  sha_url="${url}.sha256"
   sha_file="$TMPDIR/go.tgz.sha256"
 
-  url="https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz"
-  sha_url="${url}.sha256"
-
-  echo "statok-install: downloading temporary Go ${GO_VERSION} from $url"
-  download "$url" "$tgz"
-
-  echo "statok-install: verifying Go ${GO_VERSION} checksum"
   download "$sha_url" "$sha_file"
 
+  # sha file format typically: "<hash>  <filename>"
   want_sha="$(awk '{print $1}' "$sha_file" | head -n1)"
-  [ -n "${want_sha:-}" ] || err "could not parse checksum from: $sha_url"
 
-  got_sha="$(sha256_calc "$tgz" | awk '{print $1}')"
+  if ! is_hex64 "${want_sha:-}"; then
+    return 1
+  fi
+
+  printf '%s %s\n' "$url" "$want_sha"
+}
+
+# Auto-select latest stable linux-$arch tarball and checksum from go.dev JSON.
+# Outputs: "<url> <sha256>" to stdout on success.
+go_asset_latest_stable() {
+  local arch json url sha filename ver
+  arch="$(ensure_linux_arch)"
+  json="$TMPDIR/go.dl.json"
+
+  download "https://go.dev/dl/?mode=json" "$json"
+
+  # Minimal JSON scraping (no jq):
+  # - Find first object with "stable":true
+  # - Within that object, find the file entry for linux-$arch tar.gz and extract filename + sha256.
+  #
+  # Assumptions: go.dev JSON structure is consistent.
+  # We treat one "record" as everything until the closing "]," of the "files" array.
+  ver="$(
+    awk '
+      BEGIN{RS="\\{"; FS="\n"}
+      /"stable":[[:space:]]*true/ {
+        for (i=1;i<=NF;i++) {
+          if ($i ~ /"version":[[:space:]]*"/) {
+            gsub(/.*"version":[[:space:]]*"/,"",$i); gsub(/".*/,"",$i);
+            print $i; exit
+          }
+        }
+      }' "$json" | head -n1
+  )"
+  [ -n "${ver:-}" ] || err "could not detect latest stable Go version from go.dev JSON"
+
+  # Extract filename + sha256 for linux-$arch tar.gz for that version.
+  # We locate the version block by searching forward from the version line, then pick the first matching filename.
+  filename="$(
+    awk -v v="$ver" -v a="$arch" '
+      BEGIN{found=0}
+      $0 ~ "\"version\":[[:space:]]*\""v"\"" {found=1}
+      found==1 {
+        if ($0 ~ "\"filename\":[[:space:]]*\"go.*linux-"a"\\.tar\\.gz\"") {
+          match($0, /"filename":[[:space:]]*"([^"]+)"/, m); print m[1]; exit
+        }
+      }' "$json"
+  )"
+  sha="$(
+    awk -v v="$ver" -v a="$arch" '
+      BEGIN{found=0; want=0}
+      $0 ~ "\"version\":[[:space:]]*\""v"\"" {found=1}
+      found==1 {
+        if ($0 ~ "\"filename\":[[:space:]]*\"go.*linux-"a"\\.tar\\.gz\"") {want=1}
+        if (want==1 && $0 ~ "\"sha256\":[[:space:]]*\"") {
+          match($0, /"sha256":[[:space:]]*"([^"]+)"/, m); print m[1]; exit
+        }
+      }' "$json"
+  )"
+
+  if [ -z "${filename:-}" ] || [ -z "${sha:-}" ] || ! is_hex64 "$sha"; then
+    err "could not extract linux-${arch} tarball checksum from go.dev JSON"
+  fi
+
+  url="https://go.dev/dl/${filename}"
+  printf '%s %s\n' "$url" "$sha"
+}
+
+setup_temp_go() {
+  need_cmd tar
+
+  local url want_sha tgz got_sha picked
+
+  # Choose toolchain:
+  # 1) If GO_VERSION is set, try it.
+  # 2) Otherwise, pick latest stable from go.dev JSON.
+  picked=""
+  if [ -n "${GO_VERSION:-}" ]; then
+    if picked="$(go_asset_for_version "$GO_VERSION" 2>/dev/null)"; then
+      :
+    else
+      echo "statok-install: GO_VERSION=$GO_VERSION did not resolve to a valid checksum asset; falling back to latest stable."
+      picked=""
+    fi
+  fi
+
+  if [ -z "$picked" ]; then
+    picked="$(go_asset_latest_stable)"
+  fi
+
+  url="$(printf '%s' "$picked" | awk '{print $1}')"
+  want_sha="$(printf '%s' "$picked" | awk '{print $2}')"
+
+  tgz="$TMPDIR/go.tgz"
+
+  echo "statok-install: downloading temporary Go toolchain from $url"
+  download "$url" "$tgz"
+
+  echo "statok-install: verifying Go toolchain checksum"
+  got_sha="$(sha256_calc "$tgz")"
   [ "$got_sha" = "$want_sha" ] || err "checksum mismatch for Go tarball (expected $want_sha, got $got_sha)"
 
   rm -rf "$TMPDIR/go"
   tar -C "$TMPDIR" -xzf "$tgz"
-
   [ -x "$TMPDIR/go/bin/go" ] || err "temporary Go install failed: $TMPDIR/go/bin/go not found"
 
   export GOROOT="$TMPDIR/go"
   export PATH="$GOROOT/bin:$PATH"
+
+  # Sanity check
+  "$GOROOT/bin/go" version >/dev/null 2>&1 || err "temporary Go toolchain is not runnable"
 }
 
 install_agent() {
@@ -169,7 +263,6 @@ install_agent() {
   export GOCACHE="$TMPDIR/gocache"
   mkdir -p "$GOPATH" "$GOMODCACHE" "$GOCACHE"
 
-  # Best-effort: resolve and print module version when using "latest".
   if [ "$STATOK_VERSION" != "latest" ]; then
     resolved_version="$STATOK_VERSION"
   else
