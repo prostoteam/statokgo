@@ -15,6 +15,7 @@ const (
 	defaultFlushTimeout          = 5 * time.Second
 	defaultIngestPath            = "/api/i/batch"
 	defaultValueAggAutoThreshold = 4
+	workloadMaxLen               = 100
 )
 
 // ValueAggregationMode describes how value metrics are handled inside the client.
@@ -46,6 +47,8 @@ type Config struct {
 	FlushTimeout      time.Duration
 	LocalAggCounters  bool
 	ValueMode         ValueAggregationMode
+	// Workload optionally sets the X-Statok-Workload header for HTTP transports.
+	Workload string
 	// ValueAggAutoThreshold controls when ValueAggregationAuto switches a series
 	// from raw forwarding to averaged emission within a flush window.
 	ValueAggAutoThreshold int
@@ -62,6 +65,7 @@ type noopLogger struct{}
 func (noopLogger) Printf(string, ...any) {}
 
 func (c *Config) applyDefaults() {
+	c.Workload = strings.TrimSpace(c.Workload)
 	if c.QueueSize <= 0 {
 		c.QueueSize = defaultQueueSize
 	}
@@ -89,8 +93,16 @@ func (c *Config) applyDefaults() {
 			Logger:   c.Logger,
 		}
 	}
-	if ht, ok := c.Transport.(*HTTPTransport); ok && ht.Logger == nil {
-		ht.Logger = c.Logger
+	if ht, ok := c.Transport.(*HTTPTransport); ok {
+		if ht.Logger == nil {
+			ht.Logger = c.Logger
+		}
+		if c.Workload == "" {
+			c.Workload = strings.TrimSpace(ht.Workload)
+		}
+		if c.Workload != "" {
+			ht.Workload = c.Workload
+		}
 	}
 	if c.Logger == nil {
 		c.Logger = noopLogger{}
@@ -98,6 +110,31 @@ func (c *Config) applyDefaults() {
 	if c.ValueAggAutoThreshold <= 0 {
 		c.ValueAggAutoThreshold = defaultValueAggAutoThreshold
 	}
+}
+
+func (c *Config) validate() error {
+	return validateWorkload(c.Workload)
+}
+
+func validateWorkload(workload string) error {
+	if workload == "" {
+		return nil
+	}
+	if len(workload) > workloadMaxLen {
+		return ErrInvalidWorkload
+	}
+	for i := 0; i < len(workload); i++ {
+		ch := workload[i]
+		switch {
+		case ch >= 'a' && ch <= 'z':
+		case ch >= 'A' && ch <= 'Z':
+		case ch >= '0' && ch <= '9':
+		case ch == '.' || ch == '-' || ch == '_' || ch == '/':
+		default:
+			return ErrInvalidWorkload
+		}
+	}
+	return nil
 }
 
 // EndpointFromHost builds the ingest endpoint from a host (with or without scheme)

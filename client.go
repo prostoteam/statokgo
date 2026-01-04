@@ -12,8 +12,9 @@ import (
 )
 
 var (
-	ErrNoTransport  = errors.New("statok: no transport configured")
-	ErrClientClosed = errors.New("statok: client closed")
+	ErrNoTransport     = errors.New("statok: no transport configured")
+	ErrClientClosed    = errors.New("statok: client closed")
+	ErrInvalidWorkload = errors.New("statok: invalid workload")
 )
 
 // Client implements the non-blocking Statok metrics API.
@@ -31,6 +32,9 @@ type Client struct {
 // background flushing goroutine.
 func NewClient(cfg Config) (*Client, error) {
 	cfg.applyDefaults()
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
 	if cfg.Transport == nil {
 		return nil, ErrNoTransport
 	}

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -24,6 +25,11 @@ import (
 )
 
 func main() {
+	var workload string
+	flag.StringVar(&workload, "workload", "", "workload label forwarded to the Statok backend")
+	flag.StringVar(&workload, "w", "", "shorthand for --workload")
+	flag.Parse()
+
 	host := os.Getenv("STATOK_HOST")
 	if host == "" {
 		host = os.Getenv("STATOK_ENDPOINT") // backwards-compat fallback
@@ -41,6 +47,7 @@ func main() {
 		FlushInterval:     2 * time.Second,
 		LocalAggCounters:  true,
 		ValueMode:         statok.ValueAggregationBatch,
+		Workload:          workload,
 	})
 	if err != nil {
 		log.Fatalf("statok: init failed: %v", err)
