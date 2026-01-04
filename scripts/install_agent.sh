@@ -121,21 +121,11 @@ use_system_go_if_ok() {
 
 extract_go_candidates() {
   local json="$1" arch="$2" limit="${3:-12}"
-  awk -v a="$arch" -v lim="$limit" '
-    BEGIN{want=0; fname=""; sha=""; n=0}
-    /"filename":[[:space:]]*"go[^"]*linux-'"$arch"'[.]tar[.]gz"/ {
-      match($0, /"filename":[[:space:]]*"([^"]+)"/, m); fname=m[1]; want=1; next
-    }
-    want==1 && /"sha256":[[:space:]]*"/ {
-      match($0, /"sha256":[[:space:]]*"([^"]+)"/, m); sha=m[1]
-      if (fname != "" && sha != "") {
-        print fname, sha
-        n++
-      }
-      want=0; fname=""; sha=""
-      if (n>=lim) exit
-    }
-  ' "$json"
+
+  tr -d '\n\r\t' <"$json" \
+  | grep -oE '"filename"[[:space:]]*:[[:space:]]*"go[^"]*linux-'"$arch"'\.tar\.gz"[^}]*"sha256"[[:space:]]*:[[:space:]]*"[0-9a-fA-F]{64}"' \
+  | head -n "$limit" \
+  | sed -E 's/.*"filename"[[:space:]]*:[[:space:]]*"([^"]+)".*"sha256"[[:space:]]*:[[:space:]]*"([0-9a-fA-F]{64})".*/\1 \2/'
 }
 
 setup_temp_go_or_fail() {
