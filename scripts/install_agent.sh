@@ -141,7 +141,10 @@ extract_go_candidates() {
 setup_temp_go_or_fail() {
   need_cmd tar
 
-  local arch json tgz fname sha url got ok=0
+  local arch json tgz fname sha url got
+  local ok=1
+  local candidates
+
   arch="$(ensure_linux_arch)"
 
   json="$TMPDIR/go.dl.json"
@@ -153,6 +156,9 @@ setup_temp_go_or_fail() {
 
   # sanity: avoid HTML
   head -c 1 "$json" | grep -q '\[' || err "unexpected response from go.dev (not JSON)"
+
+  candidates="$(extract_go_candidates "$json" "$arch" 12 || true)"
+  [ -n "${candidates:-}" ] || err "no Go toolchain candidates found in manifest (parser may be broken)"
 
   while read -r fname sha; do
     fname="$(trim_ws "$fname")"
@@ -182,7 +188,6 @@ setup_temp_go_or_fail() {
     fi
 
     echo "statok-install: checksum OK for $fname"
-    ok=1
 
     rm -rf "$TMPDIR/go"
     tar -C "$TMPDIR" -xzf "$tgz"
@@ -191,8 +196,10 @@ setup_temp_go_or_fail() {
     export GOROOT="$TMPDIR/go"
     export PATH="$GOROOT/bin:$PATH"
     "$GOROOT/bin/go" version >/dev/null 2>&1 || err "temporary Go toolchain is not runnable"
+
+    ok=0
     break
-  done < <(extract_go_candidates "$json" "$arch" 12)
+  done <<<"$candidates"
 
   return "$ok"
 }
