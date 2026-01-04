@@ -1,9 +1,23 @@
 #!/usr/bin/env bash
 # Install/update statok hostmetrics agent and run it in background.
+#
+# Design goals (simplified, deterministic, minimal host impact):
 # - Uses system Go if >= GO_MIN_VERSION.
-# - Otherwise tries temporary Go toolchain download (deleted on exit).
-# - If downloads are blocked/altered, falls back to apt-get (Debian/Ubuntu) and removes afterwards.
+# - Otherwise downloads a fixed temporary Go toolchain from dl.google.com, uses it to build, and deletes it.
+# - NO apt-get fallback (no package install/remove; avoids modifying host package state).
 # - Idempotent runtime: restarts only the agent started by this script (PID file), avoids duplicates.
+#
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/prostoteam/statokgo/main/scripts/install_agent.sh | bash -s -- --workload firstvds-proxy
+#
+# Optional env overrides:
+#   GO_MIN_VERSION=1.21.0
+#   GO_BOOTSTRAP_VERSION=1.22.5
+#   BIN_NAME=statok-agent
+#   INSTALL_DIR=$HOME/.local/bin
+#   STATOK_HOST_DEFAULT=statok.dev0101.xyz
+#   STATOK_VERSION=latest
+#   GOFLAGS="-buildvcs=false"
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -19,6 +33,10 @@ LOG_FILE="${LOG_FILE:-$HOME/.statok-agent.log}"
 
 # Build defaults
 GO_MIN_VERSION="${GO_MIN_VERSION:-1.21.0}"
+# Fixed bootstrap Go version to download if system Go is too old.
+# Pick any known-good >= GO_MIN_VERSION.
+GO_BOOTSTRAP_VERSION="${GO_BOOTSTRAP_VERSION:-1.22.5}"
+
 STATOK_VERSION="${STATOK_VERSION:-latest}"
 GOFLAGS="${GOFLAGS:--buildvcs=false}"
 
@@ -27,9 +45,6 @@ DEFAULT_BIN_NAME="statok-hostmetrics"
 
 # Only supported option
 WORKLOAD="${WORKLOAD:-}"
-
-# Track whether we installed Go via apt so we can remove it afterwards.
-APT_GO_INSTALLED=0
 
 err() { echo "statok-install: $*" >&2; exit 1; }
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
@@ -54,39 +69,22 @@ download() {
   [ -n "$url" ] || err "download called with empty URL"
 
   if have_cmd curl; then
-    curl -fL --retry 3 --retry-delay 1 --connect-timeout 10 -sS "$url" -o "$out" \
-      || return 1
+    curl -fL --retry 3 --retry-delay 1 --connect-timeout 10 -sS "$url" -o "$out" || return 1
   elif have_cmd wget; then
-    wget --tries=3 --timeout=10 -qO "$out" "$url" \
-      || return 1
+    wget --tries=3 --timeout=10 -qO "$out" "$url" || return 1
   else
     err "need curl or wget"
   fi
 }
 
 version_ge() {
+  # true if $1 >= $2 (semver-ish using sort -V)
   [ "$(printf '%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]
 }
 
-sha256_calc() {
-  local file="$1"
-  if have_cmd sha256sum; then
-    sha256sum "$file" | awk '{print $1}'
-  elif have_cmd shasum; then
-    shasum -a 256 "$file" | awk '{print $1}'
-  elif have_cmd openssl; then
-    openssl dgst -sha256 "$file" | awk '{print $NF}'
-  else
-    err "need sha256sum, shasum, or openssl for checksum verification"
-  fi
-}
-
-is_hex64() { printf '%s' "$1" | grep -Eq '^[0-9a-fA-F]{64}$'; }
-
-# Verify the downloaded file looks like gzip (tar.gz). If not, print a hint.
+# Verify downloaded file looks like gzip (tar.gz). If not, likely proxied/HTML.
 is_gzip_file() {
   local f="$1"
-  # gzip magic bytes: 1f 8b
   local magic
   magic="$(head -c 2 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')"
   [ "$magic" = "1f8b" ]
@@ -119,105 +117,39 @@ use_system_go_if_ok() {
   return 1
 }
 
-extract_go_candidates() {
-  local json="$1" arch="$2" limit="${3:-12}"
-
-  tr -d '\n\r\t' <"$json" \
-  | grep -oE '"filename"[[:space:]]*:[[:space:]]*"go[^"]*linux-'"$arch"'\.tar\.gz"[^}]*"sha256"[[:space:]]*:[[:space:]]*"[0-9a-fA-F]{64}"' \
-  | head -n "$limit" \
-  | sed -E 's/.*"filename"[[:space:]]*:[[:space:]]*"([^"]+)".*"sha256"[[:space:]]*:[[:space:]]*"([0-9a-fA-F]{64})".*/\1 \2/'
-}
-
 setup_temp_go_or_fail() {
   need_cmd tar
 
-  local arch json tgz fname sha url got
-  local ok=1
-  local candidates
-
+  local arch fname url tgz
   arch="$(ensure_linux_arch)"
 
-  json="$TMPDIR/go.dl.json"
+  fname="go${GO_BOOTSTRAP_VERSION}.linux-${arch}.tar.gz"
+  url="https://dl.google.com/go/${fname}"
   tgz="$TMPDIR/go.tgz"
 
-  if ! download "https://go.dev/dl/?mode=json" "$json"; then
-    err "failed to download go.dev JSON manifest (network/DNS/proxy issue)"
+  echo "statok-install: downloading temporary Go toolchain: ${fname}"
+  download "$url" "$tgz" || err "failed to download ${url}"
+
+  if ! is_gzip_file "$tgz"; then
+    echo "statok-install: downloaded content is not a tar.gz (likely blocked/proxied). First line:"
+    head -n 1 "$tgz" | sed 's/^/  /'
+    err "cannot obtain a valid Go toolchain"
   fi
 
-  # sanity: avoid HTML
-  head -c 1 "$json" | grep -q '\[' || err "unexpected response from go.dev (not JSON)"
+  rm -rf "$TMPDIR/go"
+  tar -C "$TMPDIR" -xzf "$tgz"
+  [ -x "$TMPDIR/go/bin/go" ] || err "temporary Go install failed: $TMPDIR/go/bin/go not found"
 
-  candidates="$(extract_go_candidates "$json" "$arch" 12 || true)"
-  [ -n "${candidates:-}" ] || err "no Go toolchain candidates found in manifest (parser may be broken)"
+  export GOROOT="$TMPDIR/go"
+  export PATH="$GOROOT/bin:$PATH"
 
-  while read -r fname sha; do
-    fname="$(trim_ws "$fname")"
-    sha="$(trim_ws "$sha")"
-    [ -n "$fname" ] || continue
-    is_hex64 "$sha" || continue
+  go version >/dev/null 2>&1 || err "temporary Go toolchain is not runnable"
 
-    url="https://dl.google.com/go/$fname"
-    echo "statok-install: downloading temporary Go toolchain: $fname"
-
-    if ! download "$url" "$tgz"; then
-      echo "statok-install: download failed for $fname; trying next candidate"
-      continue
-    fi
-
-    if ! is_gzip_file "$tgz"; then
-      echo "statok-install: downloaded content is not a tar.gz (likely blocked/proxied). First line:"
-      head -n 1 "$tgz" | sed 's/^/  /'
-      echo "statok-install: trying next candidate"
-      continue
-    fi
-
-    got="$(sha256_calc "$tgz")"
-    if [ "$got" != "$sha" ]; then
-      echo "statok-install: checksum mismatch for $fname; trying next candidate"
-      continue
-    fi
-
-    echo "statok-install: checksum OK for $fname"
-
-    rm -rf "$TMPDIR/go"
-    tar -C "$TMPDIR" -xzf "$tgz"
-    [ -x "$TMPDIR/go/bin/go" ] || err "temporary Go install failed: $TMPDIR/go/bin/go not found"
-
-    export GOROOT="$TMPDIR/go"
-    export PATH="$GOROOT/bin:$PATH"
-    "$GOROOT/bin/go" version >/dev/null 2>&1 || err "temporary Go toolchain is not runnable"
-
-    ok=0
-    break
-  done <<<"$candidates"
-
-  return "$ok"
-}
-
-apt_install_go_for_build() {
-  # Debian/Ubuntu fallback. Installs golang-go, uses it for build, then removes.
-  have_cmd apt-get || err "could not obtain temp Go toolchain; apt-get not available for fallback"
-
-  echo "statok-install: falling back to apt-get golang-go (temporary for build)"
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update -y >/dev/null
-  apt-get install -y golang-go >/dev/null
-
-  APT_GO_INSTALLED=1
-
-  # Ensure it meets minimum
+  # Ensure minimum satisfied (defensive)
   local gv
   gv="$(go version 2>/dev/null | awk '{print $3}' | sed 's/^go//')"
   if ! version_ge "$gv" "$GO_MIN_VERSION"; then
-    err "apt-installed Go $gv is still < $GO_MIN_VERSION; cannot proceed"
-  fi
-}
-
-apt_remove_go_if_installed() {
-  if [ "$APT_GO_INSTALLED" -eq 1 ]; then
-    echo "statok-install: removing apt-installed Go packages"
-    apt-get remove -y golang-go >/dev/null || true
-    apt-get autoremove -y >/dev/null || true
+    err "temporary Go $gv is still < $GO_MIN_VERSION; set GO_BOOTSTRAP_VERSION accordingly"
   fi
 }
 
@@ -334,14 +266,11 @@ main() {
   TMPDIR="$(mktemp -d -t statok-install.XXXXXX)"
   export TMPDIR
 
-  # Always cleanup temp dir and (if used) apt-installed Go.
-  trap 'apt_remove_go_if_installed; rm -rf "$TMPDIR"' EXIT INT TERM
+  # Always cleanup temp dir.
+  trap 'rm -rf "$TMPDIR"' EXIT INT TERM
 
   if ! use_system_go_if_ok; then
-    if ! setup_temp_go_or_fail; then
-      # temp go path failed for all candidates -> apt fallback
-      apt_install_go_for_build
-    fi
+    setup_temp_go_or_fail
   fi
 
   install_agent
