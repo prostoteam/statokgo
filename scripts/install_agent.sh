@@ -1,37 +1,35 @@
 #!/usr/bin/env bash
 # Install/update statok hostmetrics agent and run it in background.
-# - Uses system Go if >= GO_MIN_VERSION, else uses a temporary Go toolchain (deleted on exit).
-# - Installs binary to $HOME/.local/bin/statok-agent by default (configurable via env).
-# - Starts agent in background with default STATOK_HOST=statok.dev0101.xyz
-# - Idempotent: re-running updates binary and avoids duplicate processes.
+# - Uses system Go if >= GO_MIN_VERSION; otherwise downloads TEMP Go toolchain (deleted on exit).
+# - Robust Go download: reads stable list (mode=json), tries multiple candidates until sha256 verifies.
+# - Idempotent runtime: restarts the agent started by this script (via PID file), no duplicate instances.
 
 set -euo pipefail
 IFS=$'\n\t'
 
-# Install config (env-overridable)
+# Install/runtime defaults
 BIN_NAME="${BIN_NAME:-statok-agent}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 BIN_PATH="$INSTALL_DIR/$BIN_NAME"
 
-# Runtime config
-STATOK_HOST_DEFAULT="statok.dev0101.xyz"
-STATOK_HOST="${STATOK_HOST:-$STATOK_HOST_DEFAULT}"
-WORKLOAD="${WORKLOAD:-}"
-
-# Build config
-GO_MIN_VERSION="${GO_MIN_VERSION:-1.21.0}"
-STATOK_VERSION="${STATOK_VERSION:-latest}"
-GOFLAGS="${GOFLAGS:--buildvcs=false}"
-MODULE_PATH="github.com/prostoteam/statokgo/cmd/statok-hostmetrics"
-DEFAULT_BIN_NAME="statok-hostmetrics"
-
-# Process management (root-safe, user-safe)
+STATOK_HOST_DEFAULT="${STATOK_HOST_DEFAULT:-statok.dev0101.xyz}"
 PID_FILE="${PID_FILE:-$HOME/.statok-agent.pid}"
 LOG_FILE="${LOG_FILE:-$HOME/.statok-agent.log}"
 
+# Build defaults
+GO_MIN_VERSION="${GO_MIN_VERSION:-1.21.0}"
+STATOK_VERSION="${STATOK_VERSION:-latest}"
+GOFLAGS="${GOFLAGS:--buildvcs=false}"
+
+MODULE_PATH="github.com/prostoteam/statokgo/cmd/statok-hostmetrics"
+DEFAULT_BIN_NAME="statok-hostmetrics"
+
+# Only supported option
+WORKLOAD="${WORKLOAD:-}"
+
 err() { echo "statok-install: $*" >&2; exit 1; }
-need_cmd() { command -v "$1" >/dev/null 2>&1 || err "missing required command: $1"; }
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
+need_cmd() { have_cmd "$1" || err "missing required command: $1"; }
 
 usage() {
   cat <<EOF
@@ -39,22 +37,32 @@ Usage:
   $(basename "$0") [--workload <value>]
 
 Options:
-  -w, --workload   Optional workload label passed to agent at runtime.
-  -h, --help       Show this help.
+  -w, --workload   Optional workload label passed to agent at runtime
+  -h, --help       Show this help
 
-Env vars:
-  WORKLOAD, STATOK_HOST, BIN_NAME, INSTALL_DIR, STATOK_VERSION, GO_MIN_VERSION, GOFLAGS, PID_FILE, LOG_FILE
+Env overrides:
+  WORKLOAD, BIN_NAME, INSTALL_DIR, STATOK_HOST_DEFAULT, PID_FILE, LOG_FILE,
+  GO_MIN_VERSION, STATOK_VERSION, GOFLAGS
 EOF
+}
+
+trim_ws() {
+  # Trim CR and surrounding whitespace
+  # shellcheck disable=SC2001
+  printf '%s' "$1" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
 }
 
 download() {
   local url="$1" out="$2"
-  # Defensive: strip CR/LF from URL to avoid curl(3)
-  url="$(printf '%s' "$url" | tr -d '\r\n')"
+  url="$(trim_ws "$url")"
+  [ -n "$url" ] || err "download called with empty URL"
+
   if have_cmd curl; then
-    curl -fsSL "$url" -o "$out"
+    curl -fL --retry 3 --retry-delay 1 --connect-timeout 10 -sS "$url" -o "$out" \
+      || err "download failed: $url"
   elif have_cmd wget; then
-    wget -qO "$out" "$url"
+    wget --tries=3 --timeout=10 -qO "$out" "$url" \
+      || err "download failed: $url"
   else
     err "need curl or wget"
   fi
@@ -73,26 +81,25 @@ sha256_calc() {
   elif have_cmd openssl; then
     openssl dgst -sha256 "$file" | awk '{print $NF}'
   else
-    err "need sha256sum, shasum, or openssl"
+    err "need sha256sum, shasum, or openssl for checksum verification"
   fi
 }
 
+is_hex64() { printf '%s' "$1" | grep -Eq '^[0-9a-fA-F]{64}$'; }
+
 ensure_linux_arch() {
-  local os arch
-  os="$(uname -s)"
-  arch="$(uname -m)"
-  [ "$os" = "Linux" ] || err "unsupported OS: $os (Linux only)"
-  case "$arch" in
+  [ "$(uname -s)" = "Linux" ] || err "unsupported OS (Linux only)"
+  case "$(uname -m)" in
     x86_64|amd64) echo "amd64" ;;
     aarch64|arm64) echo "arm64" ;;
-    *) err "unsupported arch: $arch (supported: amd64, arm64)" ;;
+    *) err "unsupported arch (amd64/arm64 only)" ;;
   esac
 }
 
 ensure_install_dir() {
   mkdir -p "$INSTALL_DIR"
-  [ -d "$INSTALL_DIR" ] || err "install dir not a directory: $INSTALL_DIR"
-  [ -w "$INSTALL_DIR" ] || err "install dir not writable: $INSTALL_DIR"
+  [ -d "$INSTALL_DIR" ] || err "install dir is not a directory: $INSTALL_DIR"
+  [ -w "$INSTALL_DIR" ] || err "install dir is not writable: $INSTALL_DIR"
 }
 
 use_system_go_if_ok() {
@@ -107,75 +114,63 @@ use_system_go_if_ok() {
   return 1
 }
 
-# Extract up to N candidate lines: "<filename> <sha256>"
-# Robust state machine: within each file object, capture filename + sha256.
+# Extract top N candidate (filename, sha256) pairs for linux-$arch tar.gz from go.dev JSON
 extract_go_candidates() {
-  local json="$1" arch="$2" limit="${3:-15}"
-
-  awk -v a="$arch" -v limit="$limit" '
-    BEGIN{
-      in_files=0; in_file=0;
-      fname=""; sha="";
-      count=0;
+  local json="$1" arch="$2" limit="${3:-12}"
+  awk -v a="$arch" -v lim="$limit" '
+    BEGIN{want=0; fname=""; sha=""; n=0}
+    /"filename":[[:space:]]*"go[^"]*linux-'"$arch"'[.]tar[.]gz"/ {
+      match($0, /"filename":[[:space:]]*"([^"]+)"/, m); fname=m[1]; want=1; next
     }
-    /"files"[[:space:]]*:[[:space:]]*\[/ { in_files=1 }
-    in_files==1 && /{[[:space:]]*$/ { in_file=1; fname=""; sha=""; next }
-    in_file==1 {
-      if ($0 ~ /"filename"[[:space:]]*:[[:space:]]*"/) {
-        match($0, /"filename"[[:space:]]*:[[:space:]]*"([^"]+)"/, m); fname=m[1];
+    want==1 && /"sha256":[[:space:]]*"/ {
+      match($0, /"sha256":[[:space:]]*"([^"]+)"/, m); sha=m[1]
+      if (fname != "" && sha != "") {
+        print fname, sha
+        n++
       }
-      if ($0 ~ /"sha256"[[:space:]]*:[[:space:]]*"/) {
-        match($0, /"sha256"[[:space:]]*:[[:space:]]*"([^"]+)"/, m); sha=m[1];
-      }
-      if ($0 ~ /}[[:space:]]*,?[[:space:]]*$/) {
-        # end of file object
-        if (fname ~ ("linux-"a"\\.tar\\.gz$") && sha ~ /^[0-9a-fA-F]{64}$/) {
-          print fname, sha;
-          count++;
-          if (count >= limit) exit;
-        }
-        in_file=0;
-      }
+      want=0; fname=""; sha=""
+      if (n>=lim) exit
     }
-  ' "$json" \
-  | tr -d '\r' \
-  | awk '{gsub(/[[:space:]]+$/, "", $0); print}'
+  ' "$json"
 }
 
 setup_temp_go() {
   need_cmd tar
 
-  local arch json tgz line filename want_sha url got_sha ok=0
-
+  local arch json tgz fname sha url got ok=0
   arch="$(ensure_linux_arch)"
+
   json="$TMPDIR/go.dl.json"
   tgz="$TMPDIR/go.tgz"
 
   download "https://go.dev/dl/?mode=json" "$json"
-  # Sanity: should start with '[' (not HTML)
+  # quick sanity (avoid HTML)
   head -c 1 "$json" | grep -q '\[' || err "unexpected response from go.dev (not JSON)"
 
-  while IFS= read -r line; do
-    filename="$(printf '%s' "$line" | awk '{print $1}' | tr -d '\r\n')"
-    want_sha="$(printf '%s' "$line" | awk '{print $2}' | tr -d '\r\n')"
+  while read -r fname sha; do
+    fname="$(trim_ws "$fname")"
+    sha="$(trim_ws "$sha")"
 
-    [ -n "$filename" ] || continue
-    [ -n "$want_sha" ] || continue
+    [ -n "$fname" ] || continue
+    is_hex64 "$sha" || continue
 
-    url="https://dl.google.com/go/$filename"
-    echo "statok-install: downloading temporary Go toolchain: $filename"
-    if ! download "$url" "$tgz"; then
-      echo "statok-install: download failed for $filename; trying next candidate"
+    # Prefer dl.google.com/go; go.dev redirects there anyway.
+    url="https://dl.google.com/go/$fname"
+
+    echo "statok-install: downloading temporary Go toolchain: $fname"
+    # If download fails (or mismatch), try next candidate.
+    if ! ( download "$url" "$tgz" ); then
+      echo "statok-install: failed to download $fname; trying next candidate"
       continue
     fi
 
-    got_sha="$(sha256_calc "$tgz" | tr -d '\r\n')"
-    if [ "$got_sha" != "$want_sha" ]; then
-      echo "statok-install: checksum mismatch for $filename; trying next candidate"
+    got="$(sha256_calc "$tgz")"
+    if [ "$got" != "$sha" ]; then
+      echo "statok-install: checksum mismatch for $fname; trying next candidate"
       continue
     fi
 
-    echo "statok-install: checksum OK for $filename"
+    echo "statok-install: checksum OK for $fname"
     ok=1
 
     rm -rf "$TMPDIR/go"
@@ -186,18 +181,18 @@ setup_temp_go() {
     export PATH="$GOROOT/bin:$PATH"
     "$GOROOT/bin/go" version >/dev/null 2>&1 || err "temporary Go toolchain is not runnable"
     break
-  done < <(extract_go_candidates "$json" "$arch" 15)
+  done < <(extract_go_candidates "$json" "$arch" 12)
 
-  [ "$ok" -eq 1 ] || err "could not obtain a valid Go toolchain (all candidate checksums failed)"
+  [ "$ok" -eq 1 ] || err "could not obtain a valid Go toolchain (all candidates failed)"
 }
 
 install_agent() {
-  local gobin_tmp final_tmp
+  local gobin_tmp final_tmp final_path
 
   gobin_tmp="$TMPDIR/gobin"
   mkdir -p "$gobin_tmp"
 
-  # Keep Go caches temporary to avoid polluting user state.
+  # Keep Go caches isolated (no user pollution).
   export GOPATH="$TMPDIR/gopath"
   export GOMODCACHE="$TMPDIR/gomodcache"
   export GOCACHE="$TMPDIR/gocache"
@@ -209,79 +204,72 @@ install_agent() {
   final_tmp="$gobin_tmp/$DEFAULT_BIN_NAME"
   [ -f "$final_tmp" ] || err "expected built binary not found: $final_tmp"
 
-  # Atomic-ish replace into final location.
+  final_path="$BIN_PATH"
   if have_cmd install; then
-    install -m 0755 -T "$final_tmp" "$BIN_PATH"
+    install -m 0755 -T "$final_tmp" "$final_path"
   else
-    cp -f "$final_tmp" "$BIN_PATH"
-    chmod 0755 "$BIN_PATH"
+    cp -f "$final_tmp" "$final_path"
+    chmod 0755 "$final_path"
   fi
 
-  echo "statok-install: installed: $BIN_PATH"
+  echo "statok-install: installed: $final_path"
 }
 
-pid_is_our_agent() {
-  local pid="$1"
-  [ -n "$pid" ] || return 1
-  [ "$pid" -eq "$pid" ] 2>/dev/null || return 1
+pid_is_ours_and_running() {
+  [ -f "$PID_FILE" ] || return 1
+  local pid
+  pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
   kill -0 "$pid" 2>/dev/null || return 1
-  # Best-effort: confirm executable path matches.
-  if [ -r "/proc/$pid/exe" ]; then
-    local exe
-    exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
-    [ "$exe" = "$(readlink -f "$BIN_PATH" 2>/dev/null || printf '%s' "$BIN_PATH")" ] || return 1
+
+  # Best-effort: ensure command line references our binary name/path.
+  # If /proc isn't available, fall back to "running".
+  if [ -r "/proc/$pid/cmdline" ]; then
+    tr '\0' ' ' <"/proc/$pid/cmdline" | grep -Fq "$BIN_PATH" || return 1
   fi
   return 0
 }
 
-stop_existing_if_any() {
-  if [ -f "$PID_FILE" ]; then
-    local pid
-    pid="$(tr -d '\r\n' < "$PID_FILE" || true)"
-    if pid_is_our_agent "$pid"; then
-      echo "statok-install: stopping existing agent (pid $pid)"
-      kill "$pid" 2>/dev/null || true
-      # Give it a moment; then force if needed.
-      for _ in 1 2 3 4 5; do
-        if ! kill -0 "$pid" 2>/dev/null; then break; fi
-        sleep 1
-      done
-      if kill -0 "$pid" 2>/dev/null; then
-        kill -9 "$pid" 2>/dev/null || true
-      fi
-    fi
-    rm -f "$PID_FILE"
+stop_agent_if_running() {
+  if ! pid_is_ours_and_running; then
+    return 0
   fi
+
+  local pid
+  pid="$(cat "$PID_FILE")"
+  echo "statok-install: stopping existing agent (pid $pid)"
+  kill "$pid" 2>/dev/null || true
+
+  # Wait up to ~5s
+  for _ in 1 2 3 4 5; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      rm -f "$PID_FILE"
+      echo "statok-install: stopped"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "statok-install: agent did not stop gracefully; sending SIGKILL"
+  kill -9 "$pid" 2>/dev/null || true
+  rm -f "$PID_FILE"
 }
 
-start_agent_background() {
+start_agent() {
+  mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+  touch "$LOG_FILE" 2>/dev/null || true
+
   local args=()
-
-  [ -x "$BIN_PATH" ] || err "binary not executable: $BIN_PATH"
-
-  # Build args only for workload (host is via env for compatibility with your earlier usage)
   if [ -n "${WORKLOAD:-}" ]; then
     args+=( "--workload" "$WORKLOAD" )
   fi
 
-  # Ensure we do not spawn duplicates.
-  # We stop any previously tracked agent (if it is ours) and then start exactly one.
-  stop_existing_if_any
-
-  echo "statok-install: starting agent in background (STATOK_HOST=$STATOK_HOST)"
-  : >>"$LOG_FILE"
-
-  # Fully detach: no job control, no zombies from this script.
-  # setsid may not exist everywhere; fall back to nohup without setsid.
-  if have_cmd setsid; then
-    nohup env STATOK_HOST="$STATOK_HOST" "$BIN_PATH" "${args[@]}" \
-      >>"$LOG_FILE" 2>&1 < /dev/null &
-  else
-    nohup env STATOK_HOST="$STATOK_HOST" "$BIN_PATH" "${args[@]}" \
-      >>"$LOG_FILE" 2>&1 < /dev/null &
-  fi
-
+  echo "statok-install: starting agent in background (host $STATOK_HOST_DEFAULT)"
+  # setsid detaches from controlling terminal; backgrounding avoids blocking installer.
+  # STATOK_HOST is provided via env, consistent with your original example.
+  STATOK_HOST="$STATOK_HOST_DEFAULT" setsid "$BIN_PATH" "${args[@]}" >>"$LOG_FILE" 2>&1 < /dev/null &
   echo $! > "$PID_FILE"
+
   echo "statok-install: agent started (pid $(cat "$PID_FILE"))"
   echo "statok-install: logs: $LOG_FILE"
 }
@@ -311,7 +299,6 @@ main() {
   need_cmd sort
   need_cmd head
   need_cmd mktemp
-  need_cmd tr
 
   parse_args "$@"
   ensure_install_dir
@@ -325,7 +312,21 @@ main() {
   fi
 
   install_agent
-  start_agent_background
+  stop_agent_if_running
+  start_agent
+
+  cat <<EOF
+statok-install: done.
+
+Binary:
+  $BIN_PATH
+
+PID file:
+  $PID_FILE
+
+To stop:
+  if [ -f "$PID_FILE" ]; then kill \$(cat "$PID_FILE"); rm -f "$PID_FILE"; fi
+EOF
 }
 
 main "$@"
