@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Install/update statok hostmetrics agent and run it in background.
-# - Uses system Go if >= GO_MIN_VERSION; otherwise downloads TEMP Go toolchain (deleted on exit).
-# - Robust Go download: reads stable list (mode=json), tries multiple candidates until sha256 verifies.
-# - Idempotent runtime: restarts the agent started by this script (via PID file), no duplicate instances.
+# - Uses system Go if >= GO_MIN_VERSION.
+# - Otherwise tries temporary Go toolchain download (deleted on exit).
+# - If downloads are blocked/altered, falls back to apt-get (Debian/Ubuntu) and removes afterwards.
+# - Idempotent runtime: restarts only the agent started by this script (PID file), avoids duplicates.
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -27,6 +28,9 @@ DEFAULT_BIN_NAME="statok-hostmetrics"
 # Only supported option
 WORKLOAD="${WORKLOAD:-}"
 
+# Track whether we installed Go via apt so we can remove it afterwards.
+APT_GO_INSTALLED=0
+
 err() { echo "statok-install: $*" >&2; exit 1; }
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
 need_cmd() { have_cmd "$1" || err "missing required command: $1"; }
@@ -39,18 +43,10 @@ Usage:
 Options:
   -w, --workload   Optional workload label passed to agent at runtime
   -h, --help       Show this help
-
-Env overrides:
-  WORKLOAD, BIN_NAME, INSTALL_DIR, STATOK_HOST_DEFAULT, PID_FILE, LOG_FILE,
-  GO_MIN_VERSION, STATOK_VERSION, GOFLAGS
 EOF
 }
 
-trim_ws() {
-  # Trim CR and surrounding whitespace
-  # shellcheck disable=SC2001
-  printf '%s' "$1" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'
-}
+trim_ws() { printf '%s' "$1" | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; }
 
 download() {
   local url="$1" out="$2"
@@ -59,10 +55,10 @@ download() {
 
   if have_cmd curl; then
     curl -fL --retry 3 --retry-delay 1 --connect-timeout 10 -sS "$url" -o "$out" \
-      || err "download failed: $url"
+      || return 1
   elif have_cmd wget; then
     wget --tries=3 --timeout=10 -qO "$out" "$url" \
-      || err "download failed: $url"
+      || return 1
   else
     err "need curl or wget"
   fi
@@ -86,6 +82,15 @@ sha256_calc() {
 }
 
 is_hex64() { printf '%s' "$1" | grep -Eq '^[0-9a-fA-F]{64}$'; }
+
+# Verify the downloaded file looks like gzip (tar.gz). If not, print a hint.
+is_gzip_file() {
+  local f="$1"
+  # gzip magic bytes: 1f 8b
+  local magic
+  magic="$(head -c 2 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+  [ "$magic" = "1f8b" ]
+}
 
 ensure_linux_arch() {
   [ "$(uname -s)" = "Linux" ] || err "unsupported OS (Linux only)"
@@ -114,7 +119,6 @@ use_system_go_if_ok() {
   return 1
 }
 
-# Extract top N candidate (filename, sha256) pairs for linux-$arch tar.gz from go.dev JSON
 extract_go_candidates() {
   local json="$1" arch="$2" limit="${3:-12}"
   awk -v a="$arch" -v lim="$limit" '
@@ -134,7 +138,7 @@ extract_go_candidates() {
   ' "$json"
 }
 
-setup_temp_go() {
+setup_temp_go_or_fail() {
   need_cmd tar
 
   local arch json tgz fname sha url got ok=0
@@ -143,24 +147,31 @@ setup_temp_go() {
   json="$TMPDIR/go.dl.json"
   tgz="$TMPDIR/go.tgz"
 
-  download "https://go.dev/dl/?mode=json" "$json"
-  # quick sanity (avoid HTML)
+  if ! download "https://go.dev/dl/?mode=json" "$json"; then
+    err "failed to download go.dev JSON manifest (network/DNS/proxy issue)"
+  fi
+
+  # sanity: avoid HTML
   head -c 1 "$json" | grep -q '\[' || err "unexpected response from go.dev (not JSON)"
 
   while read -r fname sha; do
     fname="$(trim_ws "$fname")"
     sha="$(trim_ws "$sha")"
-
     [ -n "$fname" ] || continue
     is_hex64 "$sha" || continue
 
-    # Prefer dl.google.com/go; go.dev redirects there anyway.
     url="https://dl.google.com/go/$fname"
-
     echo "statok-install: downloading temporary Go toolchain: $fname"
-    # If download fails (or mismatch), try next candidate.
-    if ! ( download "$url" "$tgz" ); then
-      echo "statok-install: failed to download $fname; trying next candidate"
+
+    if ! download "$url" "$tgz"; then
+      echo "statok-install: download failed for $fname; trying next candidate"
+      continue
+    fi
+
+    if ! is_gzip_file "$tgz"; then
+      echo "statok-install: downloaded content is not a tar.gz (likely blocked/proxied). First line:"
+      head -n 1 "$tgz" | sed 's/^/  /'
+      echo "statok-install: trying next candidate"
       continue
     fi
 
@@ -183,11 +194,38 @@ setup_temp_go() {
     break
   done < <(extract_go_candidates "$json" "$arch" 12)
 
-  [ "$ok" -eq 1 ] || err "could not obtain a valid Go toolchain (all candidates failed)"
+  return "$ok"
+}
+
+apt_install_go_for_build() {
+  # Debian/Ubuntu fallback. Installs golang-go, uses it for build, then removes.
+  have_cmd apt-get || err "could not obtain temp Go toolchain; apt-get not available for fallback"
+
+  echo "statok-install: falling back to apt-get golang-go (temporary for build)"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -y >/dev/null
+  apt-get install -y golang-go >/dev/null
+
+  APT_GO_INSTALLED=1
+
+  # Ensure it meets minimum
+  local gv
+  gv="$(go version 2>/dev/null | awk '{print $3}' | sed 's/^go//')"
+  if ! version_ge "$gv" "$GO_MIN_VERSION"; then
+    err "apt-installed Go $gv is still < $GO_MIN_VERSION; cannot proceed"
+  fi
+}
+
+apt_remove_go_if_installed() {
+  if [ "$APT_GO_INSTALLED" -eq 1 ]; then
+    echo "statok-install: removing apt-installed Go packages"
+    apt-get remove -y golang-go >/dev/null || true
+    apt-get autoremove -y >/dev/null || true
+  fi
 }
 
 install_agent() {
-  local gobin_tmp final_tmp final_path
+  local gobin_tmp final_tmp
 
   gobin_tmp="$TMPDIR/gobin"
   mkdir -p "$gobin_tmp"
@@ -204,15 +242,14 @@ install_agent() {
   final_tmp="$gobin_tmp/$DEFAULT_BIN_NAME"
   [ -f "$final_tmp" ] || err "expected built binary not found: $final_tmp"
 
-  final_path="$BIN_PATH"
   if have_cmd install; then
-    install -m 0755 -T "$final_tmp" "$final_path"
+    install -m 0755 -T "$final_tmp" "$BIN_PATH"
   else
-    cp -f "$final_tmp" "$final_path"
-    chmod 0755 "$final_path"
+    cp -f "$final_tmp" "$BIN_PATH"
+    chmod 0755 "$BIN_PATH"
   fi
 
-  echo "statok-install: installed: $final_path"
+  echo "statok-install: installed: $BIN_PATH"
 }
 
 pid_is_ours_and_running() {
@@ -221,9 +258,6 @@ pid_is_ours_and_running() {
   pid="$(cat "$PID_FILE" 2>/dev/null || true)"
   [[ "$pid" =~ ^[0-9]+$ ]] || return 1
   kill -0 "$pid" 2>/dev/null || return 1
-
-  # Best-effort: ensure command line references our binary name/path.
-  # If /proc isn't available, fall back to "running".
   if [ -r "/proc/$pid/cmdline" ]; then
     tr '\0' ' ' <"/proc/$pid/cmdline" | grep -Fq "$BIN_PATH" || return 1
   fi
@@ -240,7 +274,6 @@ stop_agent_if_running() {
   echo "statok-install: stopping existing agent (pid $pid)"
   kill "$pid" 2>/dev/null || true
 
-  # Wait up to ~5s
   for _ in 1 2 3 4 5; do
     if ! kill -0 "$pid" 2>/dev/null; then
       rm -f "$PID_FILE"
@@ -256,7 +289,6 @@ stop_agent_if_running() {
 }
 
 start_agent() {
-  mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
   touch "$LOG_FILE" 2>/dev/null || true
 
   local args=()
@@ -265,8 +297,6 @@ start_agent() {
   fi
 
   echo "statok-install: starting agent in background (host $STATOK_HOST_DEFAULT)"
-  # setsid detaches from controlling terminal; backgrounding avoids blocking installer.
-  # STATOK_HOST is provided via env, consistent with your original example.
   STATOK_HOST="$STATOK_HOST_DEFAULT" setsid "$BIN_PATH" "${args[@]}" >>"$LOG_FILE" 2>&1 < /dev/null &
   echo $! > "$PID_FILE"
 
@@ -299,16 +329,22 @@ main() {
   need_cmd sort
   need_cmd head
   need_cmd mktemp
+  need_cmd tar
 
   parse_args "$@"
   ensure_install_dir
 
   TMPDIR="$(mktemp -d -t statok-install.XXXXXX)"
   export TMPDIR
-  trap 'rm -rf "$TMPDIR"' EXIT INT TERM
+
+  # Always cleanup temp dir and (if used) apt-installed Go.
+  trap 'apt_remove_go_if_installed; rm -rf "$TMPDIR"' EXIT INT TERM
 
   if ! use_system_go_if_ok; then
-    setup_temp_go
+    if ! setup_temp_go_or_fail; then
+      # temp go path failed for all candidates -> apt fallback
+      apt_install_go_for_build
+    fi
   fi
 
   install_agent
@@ -320,6 +356,9 @@ statok-install: done.
 
 Binary:
   $BIN_PATH
+
+Default host:
+  $STATOK_HOST_DEFAULT
 
 PID file:
   $PID_FILE
