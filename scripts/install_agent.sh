@@ -1,23 +1,8 @@
 #!/usr/bin/env bash
 # Install/update statok hostmetrics agent and run it in background.
 #
-# Design goals (simplified, deterministic, minimal host impact):
-# - Uses system Go if >= GO_MIN_VERSION.
-# - Otherwise downloads a fixed temporary Go toolchain from dl.google.com, uses it to build, and deletes it.
-# - NO apt-get fallback (no package install/remove; avoids modifying host package state).
-# - Idempotent runtime: restarts only the agent started by this script (PID file), avoids duplicates.
-#
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/prostoteam/statokgo/main/scripts/install_agent.sh | bash -s -- --workload firstvds-proxy
-#
-# Optional env overrides:
-#   GO_MIN_VERSION=1.21.0
-#   GO_BOOTSTRAP_VERSION=1.22.5
-#   BIN_NAME=statok-agent
-#   INSTALL_DIR=$HOME/.local/bin
-#   STATOK_HOST_DEFAULT=statok.dev0101.xyz
-#   STATOK_VERSION=latest
-#   GOFLAGS="-buildvcs=false"
+#   curl -fsSL https://raw.githubusercontent.com/prostoteam/statokgo/main/scripts/install_agent.sh | bash -s -- --workload server1 --verbose
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -43,8 +28,11 @@ GOFLAGS="${GOFLAGS:--buildvcs=false}"
 MODULE_PATH="github.com/prostoteam/statokgo/cmd/statok-hostmetrics"
 DEFAULT_BIN_NAME="statok-hostmetrics"
 
-# Only supported option
+# Only supported option (installer parses this and forwards it)
 WORKLOAD="${WORKLOAD:-}"
+
+# Any other args are passed through to the agent verbatim.
+AGENT_ARGS=()
 
 err() { echo "statok-install: $*" >&2; exit 1; }
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
@@ -53,11 +41,14 @@ need_cmd() { have_cmd "$1" || err "missing required command: $1"; }
 usage() {
   cat <<EOF
 Usage:
-  $(basename "$0") [--workload <value>]
+  $(basename "$0") [--workload <value>] [<agent-args...>]
 
-Options:
+Options (installer):
   -w, --workload   Optional workload label passed to agent at runtime
   -h, --help       Show this help
+
+Anything else is treated as an agent argument and passed through, e.g.:
+  $(basename "$0") --workload firstvds-proxy --verbose --interval=10s
 EOF
 }
 
@@ -225,9 +216,12 @@ start_agent() {
     args+=( "--workload" "$WORKLOAD" )
   fi
 
+  # Pass through all other agent args collected by parse_args()
+  args+=( "${AGENT_ARGS[@]}" )
+
   echo "statok-install: starting agent in background (host $STATOK_HOST_DEFAULT)"
   STATOK_HOST="$STATOK_HOST_DEFAULT" setsid "$BIN_PATH" "${args[@]}" >>"$LOG_FILE" 2>&1 < /dev/null &
-  echo $! > "$PID_FILE"
+  printf '%s\n' "$!" > "$PID_FILE"
 
   echo "statok-install: agent started (pid $(cat "$PID_FILE"))"
   echo "statok-install: logs: $LOG_FILE"
@@ -245,7 +239,9 @@ parse_args() {
         usage; exit 0
         ;;
       *)
-        err "unknown argument: $1 (use --help)"
+        # Unknown to installer => pass through to agent
+        AGENT_ARGS+=( "$1" )
+        shift
         ;;
     esac
   done
@@ -259,6 +255,7 @@ main() {
   need_cmd head
   need_cmd mktemp
   need_cmd tar
+  need_cmd setsid
 
   parse_args "$@"
   ensure_install_dir
