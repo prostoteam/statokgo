@@ -26,8 +26,11 @@ import (
 
 func main() {
 	var workload string
+	var verbose bool
 	flag.StringVar(&workload, "workload", "", "workload label forwarded to the Statok backend")
 	flag.StringVar(&workload, "w", "", "shorthand for --workload")
+	flag.BoolVar(&verbose, "verbose", false, "enable verbose logging")
+	flag.BoolVar(&verbose, "v", false, "shorthand for --verbose")
 	flag.Parse()
 
 	host := os.Getenv("STATOK_HOST")
@@ -47,6 +50,7 @@ func main() {
 		FlushInterval:     2 * time.Second,
 		LocalAggCounters:  true,
 		ValueMode:         statok.ValueAggregationBatch,
+		Verbose:           verbose,
 		Workload:          workload,
 	})
 	if err != nil {
