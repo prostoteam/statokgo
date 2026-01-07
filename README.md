@@ -108,3 +108,29 @@ Counters can be aggregated independently via `LocalAggCounters` (sum within the 
 - Aggregation maps are bounded by `MaxSeriesPerBatch`; exceeding the cap falls back to per-event forwarding instead of
   growing unbounded memory.
 - Network errors never surface to callers; they are logged and the worker continues with the next flush window.
+
+## Hostmetrics agent
+
+This repo also ships a small host metrics agent at `./cmd/statok-hostmetrics`.
+
+Collection cadence:
+
+- Every 10s: CPU, memory, swap, network, disk I/O
+- Every 60s: filesystem usage + inode counts
+
+Metrics emitted by the agent:
+
+| Metric                       | Kind  | Unit    | Labels                                                                 |
+|------------------------------|-------|---------|------------------------------------------------------------------------|
+| `host.cpu.usage_pct`         | value | percent | `host`, `cpu`, `mode` (user,nice,system,idle,iowait,irq,softirq,steal) |
+| `host.mem.capacity_kb`       | value | KB      | `host`, `type` (total,used,free,available)                             |
+| `host.swap.capacity_kb`      | value | KB      | `host`, `type` (total,used,free)                                       |
+| `host.fs.capacity_kb`        | value | KB      | `host`, `mount`, `device`, `type` (total,used,free)                    |
+| `host.fs.inodes_count`       | value | count   | `host`, `mount`, `device`, `type` (total,used,free)                    |
+| `host.disk.io_bytes_total`   | count | bytes   | `host`, `device`, `dir` (read,write)                                   |
+| `host.disk.io_ops_total`     | count | ops     | `host`, `device`, `dir` (read,write)                                   |
+| `host.disk.io_time_ms_total` | count | ms      | `host`, `device`                                                       |
+| `host.net.bytes_total`       | count | bytes   | `host`, `iface`, `dir` (rx,tx)                                         |
+| `host.net.packets_total`     | count | packets | `host`, `iface`, `dir` (rx,tx)                                         |
+| `host.net.errors_total`      | count | errors  | `host`, `iface`, `dir` (rx,tx)                                         |
+| `host.net.dropped_total`     | count | packets | `host`, `iface`, `dir` (rx,tx)                                         |
