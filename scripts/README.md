@@ -5,13 +5,13 @@ Use `./update` to git pull, build, and run `statok-agent` in the foreground (no 
 ## One-line installer
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/prostoteam/statokgo/main/scripts/install_agent.sh | bash -s -- --workload my-workload
+curl -fsSL https://raw.githubusercontent.com/prostoteam/statokgo/main/scripts/install_agent.sh | bash -s -- --workload my-workload --verbose
 ```
 
 Override defaults with env vars if needed:
 
 ```bash
-STATOK_HOST=collector.example.com GO_VERSION=1.25.4 ./install_agent.sh
+GO_VERSION=1.25.4 ./install_agent.sh
 ```
 
 Quick use:
@@ -25,11 +25,10 @@ Defaults:
 - App dir: current directory (`APP_DIR`)
 - Main package: `./cmd/statok-hostmetrics` (`MAIN_PKG`)
 - Output binary: `./statok-agent` (`OUTPUT`)
-- Host: `statok.dev0101.xyz` (`STATOK_HOST`)
 - Go flags: `-buildvcs=false` (`GOFLAGS`)
 
 Override via env vars if needed:
 
 ```bash
-STATOK_HOST=collector.example.com MAIN_PKG=./cmd/your-main OUTPUT=./statok-agent ./update
+MAIN_PKG=./cmd/your-main OUTPUT=./statok-agent ./update
 ```

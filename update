@@ -11,7 +11,6 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-$(pwd)}"
 MAIN_PKG="${MAIN_PKG:-./cmd/statok-hostmetrics}"
 OUTPUT="${OUTPUT:-./statok-agent}"
-STATOK_HOST="${STATOK_HOST:-statok.dev0101.xyz}"
 GOFLAGS="${GOFLAGS:--buildvcs=false}"
 
 cd "${APP_DIR}"
@@ -23,4 +22,4 @@ echo "[statok-agent] building ${OUTPUT} from ${MAIN_PKG}"
 GOFLAGS="${GOFLAGS}" go build -o "${OUTPUT}" "${MAIN_PKG}"
 
 echo "[statok-agent] running ${OUTPUT} (Ctrl+C to stop)"
-STATOK_HOST="${STATOK_HOST}" exec "${OUTPUT}"
+exec "${OUTPUT}"

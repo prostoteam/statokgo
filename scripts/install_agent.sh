@@ -12,7 +12,6 @@ BIN_NAME="${BIN_NAME:-statok-agent}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 BIN_PATH="$INSTALL_DIR/$BIN_NAME"
 
-STATOK_HOST_DEFAULT="${STATOK_HOST_DEFAULT:-statok.dev0101.xyz}"
 PID_FILE="${PID_FILE:-$HOME/.statok-agent.pid}"
 LOG_FILE="${LOG_FILE:-$HOME/.statok-agent.log}"
 
@@ -28,10 +27,8 @@ GOFLAGS="${GOFLAGS:--buildvcs=false}"
 MODULE_PATH="github.com/prostoteam/statokgo/cmd/statok-hostmetrics"
 DEFAULT_BIN_NAME="statok-hostmetrics"
 
-# Only supported option (installer parses this and forwards it)
 WORKLOAD="${WORKLOAD:-}"
-
-# Any other args are passed through to the agent verbatim.
+VERBOSE="${VERBOSE:-0}"
 AGENT_ARGS=()
 
 err() { echo "statok-install: $*" >&2; exit 1; }
@@ -41,14 +38,12 @@ need_cmd() { have_cmd "$1" || err "missing required command: $1"; }
 usage() {
   cat <<EOF
 Usage:
-  $(basename "$0") [--workload <value>] [<agent-args...>]
+  $(basename "$0") [--workload <value>] [--verbose] [<agent-args...>]
 
 Options (installer):
   -w, --workload   Optional workload label passed to agent at runtime
+  -v, --verbose    Enable verbose logging in agent
   -h, --help       Show this help
-
-Anything else is treated as an agent argument and passed through, e.g.:
-  $(basename "$0") --workload firstvds-proxy --verbose --interval=10s
 EOF
 }
 
@@ -215,12 +210,13 @@ start_agent() {
   if [ -n "${WORKLOAD:-}" ]; then
     args+=( "--workload" "$WORKLOAD" )
   fi
-
-  # Pass through all other agent args collected by parse_args()
+  if [ "${VERBOSE:-0}" = "1" ]; then
+    args+=( "--verbose" )
+  fi
   args+=( "${AGENT_ARGS[@]}" )
 
-  echo "statok-install: starting agent in background (host $STATOK_HOST_DEFAULT)"
-  STATOK_HOST="$STATOK_HOST_DEFAULT" setsid "$BIN_PATH" "${args[@]}" >>"$LOG_FILE" 2>&1 < /dev/null &
+  echo "statok-install: starting agent in background"
+  setsid "$BIN_PATH" "${args[@]}" >>"$LOG_FILE" 2>&1 < /dev/null &
   printf '%s\n' "$!" > "$PID_FILE"
 
   echo "statok-install: agent started (pid $(cat "$PID_FILE"))"
@@ -234,6 +230,10 @@ parse_args() {
         [ $# -ge 2 ] || err "missing value for $1"
         WORKLOAD="$2"
         shift 2
+        ;;
+      -v|--verbose)
+        VERBOSE=1
+        shift
         ;;
       -h|--help)
         usage; exit 0
@@ -279,9 +279,6 @@ statok-install: done.
 
 Binary:
   $BIN_PATH
-
-Default host:
-  $STATOK_HOST_DEFAULT
 
 PID file:
   $PID_FILE

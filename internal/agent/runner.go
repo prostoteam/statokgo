@@ -1,0 +1,189 @@
+package agent
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"sync"
+	"time"
+)
+
+type Runner struct {
+	sem        chan struct{}
+	logLimiter *logLimiter
+}
+
+func Run(ctx context.Context, host string, core []Collector, probes []Probe) {
+	collectors := make([]Collector, 0, len(core)+len(probes))
+	for _, c := range core {
+		if c != nil {
+			collectors = append(collectors, c)
+		}
+	}
+
+	for _, p := range probes {
+		if p == nil {
+			continue
+		}
+		ok, reason := detectOnce(ctx, p)
+		if ok {
+			c := newFromProbe(p)
+			if c == nil {
+				logProbe(p.ID(), true, reason)
+				log.Printf("probe %s: init failed", p.ID())
+				continue
+			}
+			logProbe(p.ID(), true, reason)
+			collectors = append(collectors, c)
+			continue
+		}
+		logProbe(p.ID(), false, reason)
+	}
+
+	r := &Runner{
+		sem:        make(chan struct{}, MaxConcurrency),
+		logLimiter: newLogLimiter(time.Minute),
+	}
+	logStartup(host, collectors)
+	r.run(ctx, host, collectors)
+	log.Printf("agent: stopped")
+}
+
+func detectOnce(parent context.Context, p Probe) (ok bool, reason string) {
+	ctx, cancel := context.WithTimeout(parent, CollectTimeout)
+	defer cancel()
+
+	defer func() {
+		if v := recover(); v != nil {
+			ok = false
+			reason = fmt.Sprintf("probe panicked: %v", v)
+		}
+	}()
+	return p.Detect(ctx)
+}
+
+func newFromProbe(p Probe) (out Collector) {
+	defer func() {
+		if v := recover(); v != nil {
+			out = nil
+		}
+	}()
+	return p.New()
+}
+
+func (r *Runner) run(ctx context.Context, host string, collectors []Collector) {
+	var wg sync.WaitGroup
+	for _, c := range collectors {
+		if c == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(c Collector) {
+			defer wg.Done()
+			r.runCollector(ctx, host, c)
+		}(c)
+	}
+
+	<-ctx.Done()
+	wg.Wait()
+}
+
+func (r *Runner) runCollector(ctx context.Context, host string, c Collector) {
+	every := c.Every()
+	if every <= 0 {
+		every = CoreFastEvery
+	}
+
+	ticker := time.NewTicker(every)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.collectOnce(ctx, host, c)
+		}
+	}
+}
+
+func (r *Runner) collectOnce(parent context.Context, host string, c Collector) {
+	ctx, cancel := context.WithTimeout(parent, CollectTimeout)
+	defer cancel()
+
+	select {
+	case r.sem <- struct{}{}:
+	case <-ctx.Done():
+		return
+	}
+	defer func() { <-r.sem }()
+
+	err := safeCollect(ctx, host, c)
+	if err == nil {
+		return
+	}
+	if parent.Err() != nil {
+		return
+	}
+
+	if r.logLimiter.Allow(c.ID()) {
+		log.Printf("collector %s: %v", c.ID(), err)
+	}
+}
+
+func safeCollect(ctx context.Context, host string, c Collector) (err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			err = fmt.Errorf("panic: %v", v)
+		}
+	}()
+	return c.Collect(ctx, host)
+}
+
+func logStartup(host string, collectors []Collector) {
+	log.Printf("agent: started (host=%s collectors=%d timeout=%s max_concurrency=%d)", host, len(collectors), CollectTimeout, MaxConcurrency)
+	for _, c := range collectors {
+		if c == nil {
+			continue
+		}
+		log.Printf("collector %s: every=%s", c.ID(), c.Every())
+	}
+}
+
+func logProbe(id string, detected bool, reason string) {
+	status := "not detected"
+	if detected {
+		status = "detected"
+	}
+	if reason == "" {
+		log.Printf("probe %s: %s", id, status)
+		return
+	}
+	log.Printf("probe %s: %s: %s", id, status, reason)
+}
+
+type logLimiter struct {
+	mu    sync.Mutex
+	every time.Duration
+	last  map[string]time.Time
+}
+
+func newLogLimiter(every time.Duration) *logLimiter {
+	return &logLimiter{
+		every: every,
+		last:  make(map[string]time.Time),
+	}
+}
+
+func (l *logLimiter) Allow(key string) bool {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	last, ok := l.last[key]
+	if !ok || now.Sub(last) >= l.every {
+		l.last[key] = now
+		return true
+	}
+	return false
+}
