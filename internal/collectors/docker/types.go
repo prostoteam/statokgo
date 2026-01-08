@@ -14,7 +14,8 @@ type dockerContainerSummary struct {
 }
 
 type dockerStats struct {
-	CPUStats dockerCPUStats `json:"cpu_stats"`
+	CPUStats    dockerCPUStats    `json:"cpu_stats"`
+	MemoryStats dockerMemoryStats `json:"memory_stats"`
 }
 
 type dockerCPUStats struct {
@@ -31,4 +32,8 @@ type dockerCPUUsage struct {
 type dockerCPUPrev struct {
 	totalUsage  uint64
 	systemUsage uint64
+}
+
+type dockerMemoryStats struct {
+	Usage uint64 `json:"usage"`
 }

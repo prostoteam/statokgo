@@ -160,9 +160,22 @@ func (c *CPUCollector) collectContainer(ctx context.Context, hostLabel string, c
 		return
 	}
 
+	target := c.containerLabelValue(ctr)
+	if target == "" {
+		return
+	}
+	targetLabel := statok.Label(c.labelKey, target)
+
 	stats, err := c.getStats(ctx, ctr.ID)
 	if err != nil {
 		return
+	}
+
+	if usage := stats.MemoryStats.Usage; usage > 0 {
+		statok.Value("docker.container.mem.usage_bytes", float64(usage),
+			hostLabel,
+			targetLabel,
+		)
 	}
 
 	total := stats.CPUStats.CPUUsage.TotalUsage
@@ -198,14 +211,9 @@ func (c *CPUCollector) collectContainer(ctx context.Context, hostLabel string, c
 		return
 	}
 
-	target := c.containerLabelValue(ctr)
-	if target == "" {
-		return
-	}
-
 	statok.Value("docker.container.cpu.usage_pct", pct,
 		hostLabel,
-		statok.Label(c.labelKey, target),
+		targetLabel,
 	)
 }
 
