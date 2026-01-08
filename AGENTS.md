@@ -51,7 +51,7 @@ The client must prioritize safety, bounded resource usage, and efficient transpo
 - Ability to enable or disable local aggregation modes via configuration.
 - Internal behavior (queue size, flush interval, batch size) must be user-configurable at initialization.
 
-### Other
-
+### Instruction for CODEX
+- When I send you `cm`, generate a great commit message formatted as `scope[, scope...]: action-verb sentence that states what changed and why, covering overall task context rather than tiny fixes`. Add details, like initial problem (if any), root cause, implementation details.
 - Don't write tests unless you're asked to.
 - Don't compile anything and dont run tests unless you're asked to.
