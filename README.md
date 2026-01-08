@@ -134,3 +134,7 @@ Metrics emitted by the agent:
 | `host.net.packets_total`     | count | packets | `host`, `iface`, `dir` (rx,tx)                                         |
 | `host.net.errors_total`      | count | errors  | `host`, `iface`, `dir` (rx,tx)                                         |
 | `host.net.dropped_total`     | count | packets | `host`, `iface`, `dir` (rx,tx)                                         |
+| `docker.container.cpu.usage_pct` | value | percent | `host`, `service` (or `container` via `--docker-label`)                |
+
+Docker metrics are disabled by default; enable with `./statok-hostmetrics --docker` (default label mode is `service`,
+falling back to container name).

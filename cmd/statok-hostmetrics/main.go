@@ -27,10 +27,12 @@ import (
 func main() {
 	var workload string
 	var verbose bool
+	var docker dockerFlags
 	flag.StringVar(&workload, "workload", "", "workload label forwarded to the Statok backend")
 	flag.StringVar(&workload, "w", "", "shorthand for --workload")
 	flag.BoolVar(&verbose, "verbose", false, "enable verbose logging")
 	flag.BoolVar(&verbose, "v", false, "shorthand for --verbose")
+	docker.Register(flag.CommandLine)
 	flag.Parse()
 
 	host := os.Getenv("STATOK_HOST")
@@ -65,7 +67,9 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	StartCollectors(ctx, host)
+	dockerCPU := docker.Collector()
+
+	StartCollectors(ctx, host, dockerCPU)
 
 	<-ctx.Done()
 
@@ -77,12 +81,12 @@ func main() {
 }
 
 // StartCollectors launches background collectors grouped by cadence.
-func StartCollectors(ctx context.Context, host string) {
-	go collectFast(ctx, host)
+func StartCollectors(ctx context.Context, host string, dockerCPU *dockerCPUCollector) {
+	go collectFast(ctx, host, dockerCPU)
 	go collectSlow(ctx, host)
 }
 
-func collectFast(ctx context.Context, host string) {
+func collectFast(ctx context.Context, host string, dockerCPU *dockerCPUCollector) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
@@ -97,6 +101,9 @@ func collectFast(ctx context.Context, host string) {
 			collectNet(host)
 			collectDiskIO(host)
 			cpuUsage.Collect(host)
+			if dockerCPU != nil {
+				dockerCPU.Collect(ctx, host)
+			}
 		}
 	}
 }

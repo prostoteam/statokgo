@@ -54,3 +54,4 @@ The client must prioritize safety, bounded resource usage, and efficient transpo
 ### Other
 
 - Don't write tests unless you're asked to.
+- Don't compile anything and dont run tests unless you're asked to.
