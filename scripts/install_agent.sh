@@ -1,8 +1,23 @@
 #!/usr/bin/env bash
 # Install/update statok hostmetrics agent and run it in background.
 #
+# Design goals (simplified, deterministic, minimal host impact):
+# - Uses system Go if >= GO_MIN_VERSION.
+# - Otherwise downloads a fixed temporary Go toolchain from dl.google.com, uses it to build, and deletes it.
+# - NO apt-get fallback (no package install/remove; avoids modifying host package state).
+# - Idempotent runtime: restarts only the agent started by this script (PID file), avoids duplicates.
+#
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/prostoteam/statokgo/main/scripts/install_agent.sh | bash -s -- --workload server1 --verbose
+#   curl -fsSL https://raw.githubusercontent.com/prostoteam/statokgo/main/scripts/install_agent.sh | bash -s -- --workload firstvds-proxy --verbose
+#
+# Optional env overrides:
+#   GO_MIN_VERSION=1.21.0
+#   GO_BOOTSTRAP_VERSION=1.22.5
+#   BIN_NAME=statok-agent
+#   INSTALL_DIR=$HOME/.local/bin
+#   STATOK_HOST_DEFAULT=statok.dev0101.xyz
+#   STATOK_VERSION=latest
+#   GOFLAGS="-buildvcs=false"
 
 set -euo pipefail
 IFS=$'\n\t'
@@ -12,6 +27,7 @@ BIN_NAME="${BIN_NAME:-statok-agent}"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 BIN_PATH="$INSTALL_DIR/$BIN_NAME"
 
+STATOK_HOST_DEFAULT="${STATOK_HOST_DEFAULT:-statok.dev0101.xyz}"
 PID_FILE="${PID_FILE:-$HOME/.statok-agent.pid}"
 LOG_FILE="${LOG_FILE:-$HOME/.statok-agent.log}"
 
@@ -27,8 +43,10 @@ GOFLAGS="${GOFLAGS:--buildvcs=false}"
 MODULE_PATH="github.com/prostoteam/statokgo/cmd/statok-hostmetrics"
 DEFAULT_BIN_NAME="statok-hostmetrics"
 
+# Installer parses this and forwards it to the agent.
 WORKLOAD="${WORKLOAD:-}"
-VERBOSE="${VERBOSE:-0}"
+
+# Any other args are passed through to the agent verbatim.
 AGENT_ARGS=()
 
 err() { echo "statok-install: $*" >&2; exit 1; }
@@ -38,12 +56,14 @@ need_cmd() { have_cmd "$1" || err "missing required command: $1"; }
 usage() {
   cat <<EOF
 Usage:
-  $(basename "$0") [--workload <value>] [--verbose] [<agent-args...>]
+  $(basename "$0") [--workload <value>] [<agent-args...>]
 
 Options (installer):
   -w, --workload   Optional workload label passed to agent at runtime
-  -v, --verbose    Enable verbose logging in agent
   -h, --help       Show this help
+
+Anything else is treated as an agent argument and passed through, e.g.:
+  $(basename "$0") --workload firstvds-proxy --verbose --interval=10s
 EOF
 }
 
@@ -210,13 +230,12 @@ start_agent() {
   if [ -n "${WORKLOAD:-}" ]; then
     args+=( "--workload" "$WORKLOAD" )
   fi
-  if [ "${VERBOSE:-0}" = "1" ]; then
-    args+=( "--verbose" )
-  fi
+
+  # Pass through all other agent args collected by parse_args()
   args+=( "${AGENT_ARGS[@]}" )
 
-  echo "statok-install: starting agent in background"
-  setsid "$BIN_PATH" "${args[@]}" >>"$LOG_FILE" 2>&1 < /dev/null &
+  echo "statok-install: starting agent in background (host $STATOK_HOST_DEFAULT)"
+  STATOK_HOST="$STATOK_HOST_DEFAULT" setsid "$BIN_PATH" "${args[@]}" >>"$LOG_FILE" 2>&1 < /dev/null &
   printf '%s\n' "$!" > "$PID_FILE"
 
   echo "statok-install: agent started (pid $(cat "$PID_FILE"))"
@@ -230,10 +249,6 @@ parse_args() {
         [ $# -ge 2 ] || err "missing value for $1"
         WORKLOAD="$2"
         shift 2
-        ;;
-      -v|--verbose)
-        VERBOSE=1
-        shift
         ;;
       -h|--help)
         usage; exit 0
@@ -263,8 +278,7 @@ main() {
   TMPDIR="$(mktemp -d -t statok-install.XXXXXX)"
   export TMPDIR
 
-  # Always cleanup temp dir.
-  trap 'rm -rf "$TMPDIR"' EXIT INT TERM
+  trap 'chmod -R u+rwX "$TMPDIR" 2>/dev/null || true; rm -rf "$TMPDIR" 2>/dev/null || true' EXIT INT TERM
 
   if ! use_system_go_if_ok; then
     setup_temp_go_or_fail
@@ -279,6 +293,9 @@ statok-install: done.
 
 Binary:
   $BIN_PATH
+
+Default host:
+  $STATOK_HOST_DEFAULT
 
 PID file:
   $PID_FILE
