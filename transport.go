@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -60,6 +61,8 @@ var defaultHTTPClient = &http.Client{
 	Timeout: 10 * time.Second,
 }
 
+const maxErrorBodyBytes = 4096
+
 // Send implements Transport.
 func (t *HTTPTransport) Send(ctx context.Context, payload *Payload) error {
 	if t == nil {
@@ -99,13 +102,34 @@ func (t *HTTPTransport) Send(ctx context.Context, payload *Payload) error {
 		return fmt.Errorf("POST %s: %w", urlStr, err)
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body) // ensure the connection can be reused
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		io.Copy(io.Discard, resp.Body) // ensure the connection can be reused
 		if t.Logger != nil {
 			_ = bodyLen
 			//t.Logger.Printf("statok: sent %d bytes (%d counters, %d values)", bodyLen, len(payload.Counters), len(payload.Values))
 		}
 		return nil
 	}
+	detail := readErrorBody(resp.Body)
+	if detail != "" {
+		return fmt.Errorf("POST %s: %s: %s", urlStr, resp.Status, detail)
+	}
 	return fmt.Errorf("POST %s: %s", urlStr, resp.Status)
+}
+
+func readErrorBody(r io.Reader) string {
+	bodyBytes, _ := io.ReadAll(io.LimitReader(r, maxErrorBodyBytes))
+	if len(bodyBytes) == 0 {
+		return ""
+	}
+	io.Copy(io.Discard, r) // drain the rest for keep-alive
+	return compactErrorBody(string(bodyBytes))
+}
+
+func compactErrorBody(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(raw), " ")
 }
