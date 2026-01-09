@@ -57,3 +57,4 @@ The client must prioritize safety, bounded resource usage, and efficient transpo
 - Don't compile anything and dont run tests unless you're asked to.
 - When adding new metrics - dont forget to add it to README.md
 - Max value for ingester is 429496729, so try to fit in this (e.g. use Kb instead of bytes where possible, or ms instead nanosec).
+- Always bump `const VersionString = "..."` in `./version.go`.
