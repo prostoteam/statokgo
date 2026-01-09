@@ -49,6 +49,9 @@ func NewClient(cfg Config) (*Client, error) {
 		done:   make(chan struct{}),
 		logger: cfg.Logger,
 	}
+	if cfg.Verbose && c.logger != nil {
+		c.logger.Printf("statok: client version %s", Version())
+	}
 	go c.run(ctx)
 	return c, nil
 }

@@ -67,7 +67,7 @@ strings or via `statok.Label(k, v)` which sanitizes `=` and control characters.
 | `Endpoint`              | empty                  | Ingest URL. When set and `Transport` is nil, an `HTTPTransport` is created and `/api/i/batch` is appended if no path is present. |
 | `Transport`             | nil                    | Any implementation of `Transport` (HTTP is provided). Must be safe for concurrent use.                                           |
 | `Logger`                | `log.Default()`        | Receives internal errors and send summaries. Provide your own or silence by using a logger that discards output.                 |
-| `Verbose`               | `false`                | When true, logs each flush with per-type counts and metric breakdowns.                                                           |
+| `Verbose`               | `false`                | When true, logs the client version at startup and each flush with per-type counts and metric breakdowns.                        |
 | `QueueSize`             | 64_000                 | Bounded channel depth; excess events are dropped.                                                                                |
 | `MaxBatchSize`          | 512                    | Flush when this many events are collected. Also capped by `QueueSize`.                                                           |
 | `MaxSeriesPerBatch`     | 2_048                  | Limits distinct series retained in aggregation maps per batch. Beyond this, events are forwarded without further aggregation.    |
