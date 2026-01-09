@@ -64,10 +64,10 @@ func collectDiskIOProc(host string) error {
 
 		deviceLabel := statok.Label("device", dev)
 
-		statok.Count("host.disk.io_bytes_total", float64(readBytes),
+		statok.Count("host.disk.io_kb_total", float64(readBytes)/1024.0,
 			hostLabel, deviceLabel, statok.Label("dir", "read"),
 		)
-		statok.Count("host.disk.io_bytes_total", float64(writeBytes),
+		statok.Count("host.disk.io_kb_total", float64(writeBytes)/1024.0,
 			hostLabel, deviceLabel, statok.Label("dir", "write"),
 		)
 
@@ -102,10 +102,10 @@ func collectDiskIOGopsutil(host string) error {
 
 		deviceLabel := statok.Label("device", dev)
 
-		statok.Count("host.disk.io_bytes_total", float64(s.ReadBytes),
+		statok.Count("host.disk.io_kb_total", float64(s.ReadBytes)/1024.0,
 			hostLabel, deviceLabel, statok.Label("dir", "read"),
 		)
-		statok.Count("host.disk.io_bytes_total", float64(s.WriteBytes),
+		statok.Count("host.disk.io_kb_total", float64(s.WriteBytes)/1024.0,
 			hostLabel, deviceLabel, statok.Label("dir", "write"),
 		)
 

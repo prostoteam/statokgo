@@ -84,13 +84,13 @@ func collectNetProc(host string) error {
 		ifaceLabel := statok.Label("iface", iface)
 
 		dirRx := statok.Label("dir", "rx")
-		statok.Count("host.net.bytes_total", float64(rxBytes), hostLabel, ifaceLabel, dirRx)
+		statok.Count("host.net.kb_total", float64(rxBytes)/1024.0, hostLabel, ifaceLabel, dirRx)
 		statok.Count("host.net.packets_total", float64(rxPackets), hostLabel, ifaceLabel, dirRx)
 		statok.Count("host.net.errors_total", float64(rxErrs), hostLabel, ifaceLabel, dirRx)
 		statok.Count("host.net.dropped_total", float64(rxDrop), hostLabel, ifaceLabel, dirRx)
 
 		dirTx := statok.Label("dir", "tx")
-		statok.Count("host.net.bytes_total", float64(txBytes), hostLabel, ifaceLabel, dirTx)
+		statok.Count("host.net.kb_total", float64(txBytes)/1024.0, hostLabel, ifaceLabel, dirTx)
 		statok.Count("host.net.packets_total", float64(txPackets), hostLabel, ifaceLabel, dirTx)
 		statok.Count("host.net.errors_total", float64(txErrs), hostLabel, ifaceLabel, dirTx)
 		statok.Count("host.net.dropped_total", float64(txDrop), hostLabel, ifaceLabel, dirTx)
@@ -116,13 +116,13 @@ func collectNetGopsutil(host string) error {
 		ifaceLabel := statok.Label("iface", s.Name)
 
 		dirRx := statok.Label("dir", "rx")
-		statok.Count("host.net.bytes_total", float64(s.BytesRecv), hostLabel, ifaceLabel, dirRx)
+		statok.Count("host.net.kb_total", float64(s.BytesRecv)/1024.0, hostLabel, ifaceLabel, dirRx)
 		statok.Count("host.net.packets_total", float64(s.PacketsRecv), hostLabel, ifaceLabel, dirRx)
 		statok.Count("host.net.errors_total", float64(s.Errin), hostLabel, ifaceLabel, dirRx)
 		statok.Count("host.net.dropped_total", float64(s.Dropin), hostLabel, ifaceLabel, dirRx)
 
 		dirTx := statok.Label("dir", "tx")
-		statok.Count("host.net.bytes_total", float64(s.BytesSent), hostLabel, ifaceLabel, dirTx)
+		statok.Count("host.net.kb_total", float64(s.BytesSent)/1024.0, hostLabel, ifaceLabel, dirTx)
 		statok.Count("host.net.packets_total", float64(s.PacketsSent), hostLabel, ifaceLabel, dirTx)
 		statok.Count("host.net.errors_total", float64(s.Errout), hostLabel, ifaceLabel, dirTx)
 		statok.Count("host.net.dropped_total", float64(s.Dropout), hostLabel, ifaceLabel, dirTx)
