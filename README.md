@@ -67,7 +67,7 @@ strings or via `statok.Label(k, v)` which sanitizes `=` and control characters.
 | `Endpoint`              | empty                  | Ingest URL. When set and `Transport` is nil, an `HTTPTransport` is created and `/api/i/batch` is appended if no path is present. |
 | `Transport`             | nil                    | Any implementation of `Transport` (HTTP is provided). Must be safe for concurrent use.                                           |
 | `Logger`                | `log.Default()`        | Receives internal errors and send summaries. Provide your own or silence by using a logger that discards output.                 |
-| `Verbose`               | `false`                | When true, logs the client version at startup and each flush with per-type counts and metric breakdowns.                        |
+| `Verbose`               | `false`                | When true, logs the client version at startup and each flush with per-type counts and metric breakdowns.                         |
 | `QueueSize`             | 64_000                 | Bounded channel depth; excess events are dropped.                                                                                |
 | `MaxBatchSize`          | 512                    | Flush when this many events are collected. Also capped by `QueueSize`.                                                           |
 | `MaxSeriesPerBatch`     | 2_048                  | Limits distinct series retained in aggregation maps per batch. Beyond this, events are forwarded without further aggregation.    |
@@ -120,22 +120,22 @@ Collection cadence:
 
 Metrics emitted by the agent (count metrics are deltas over the collection interval):
 
-| Metric                             | Kind  | Unit    | Labels                                                                 |
-|------------------------------------|-------|---------|------------------------------------------------------------------------|
-| `host.cpu.usage_pct`               | value | percent | `host`, `cpu`, `mode` (user,nice,system,idle,iowait,irq,softirq,steal) |
-| `host.mem.capacity_kb`             | value | KB      | `host`, `type` (total,used,free,available)                             |
-| `host.swap.capacity_kb`            | value | KB      | `host`, `type` (total,used,free)                                       |
-| `host.fs.capacity_kb`              | value | KB      | `host`, `mount`, `device`, `type` (total,used,free)                    |
-| `host.fs.inodes_count`             | value | count   | `host`, `mount`, `device`, `type` (total,used,free)                    |
-| `host.disk.io_kb`                  | count | kb      | `host`, `device`, `dir` (read,write)                                   |
-| `host.disk.io_ops`                 | count | ops     | `host`, `device`, `dir` (read,write)                                   |
-| `host.disk.io_time_ms`             | count | ms      | `host`, `device`                                                       |
-| `host.net.kb`                      | count | kb      | `host`, `iface`, `dir` (rx,tx)                                         |
-| `host.net.packets`                 | count | packets | `host`, `iface`, `dir` (rx,tx)                                         |
-| `host.net.errors`                  | count | errors  | `host`, `iface`, `dir` (rx,tx)                                         |
-| `host.net.dropped`                 | count | packets | `host`, `iface`, `dir` (rx,tx)                                         |
-| `docker.container.cpu.usage_pct`   | value | percent | `host`, `service`                                                      |
-| `docker.container.mem.usage_kb`    | value | kb      | `host`, `service`                                                      |
+| Metric                           | Kind  | Unit    | Labels                                                                 |
+|----------------------------------|-------|---------|------------------------------------------------------------------------|
+| `host.cpu.usage_pct`             | value | percent | `host`, `cpu`, `mode` (user,nice,system,idle,iowait,irq,softirq,steal) |
+| `host.mem.capacity_kb`           | value | KB      | `host`, `type` (total,used,free,available)                             |
+| `host.swap.capacity_kb`          | value | KB      | `host`, `type` (total,used,free)                                       |
+| `host.fs.capacity_kb`            | value | KB      | `host`, `mount`, `device`, `type` (total,used,free)                    |
+| `host.fs.inodes_count`           | value | count   | `host`, `mount`, `device`, `type` (total,used,free)                    |
+| `host.disk.io_kb`                | count | kb      | `host`, `device`, `dir` (read,write)                                   |
+| `host.disk.io_ops`               | count | ops     | `host`, `device`, `dir` (read,write)                                   |
+| `host.disk.io_time_ms`           | count | ms      | `host`, `device`                                                       |
+| `host.net.kb`                    | count | kb      | `host`, `iface`, `dir` (rx,tx)                                         |
+| `host.net.packets`               | count | packets | `host`, `iface`, `dir` (rx,tx)                                         |
+| `host.net.errors`                | count | errors  | `host`, `iface`, `dir` (rx,tx)                                         |
+| `host.net.dropped`               | count | packets | `host`, `iface`, `dir` (rx,tx)                                         |
+| `docker.container.cpu.usage_pct` | value | percent | `host`, `service`                                                      |
+| `docker.container.mem.usage_kb`  | value | kb      | `host`, `service`                                                      |
 
 Docker metrics are enabled automatically when a local Docker socket is detected at `/var/run/docker.sock`. The label
 mode is currently hardcoded to `service` (compose service / swarm service / fallback container name).
