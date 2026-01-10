@@ -9,13 +9,13 @@ func TestEncodeLinePayloadDictionary(t *testing.T) {
 	payload := &Payload{
 		Counters: []CounterEvent{
 			{
-				Metric:    "requests_total",
+				Metric:    "requests",
 				Value:     1,
 				Labels:    []string{Label("env", "prod")},
 				Timestamp: 1730000000,
 			},
 			{
-				Metric:    "requests_total",
+				Metric:    "requests",
 				Value:     2,
 				Labels:    []string{Label("env", "prod")},
 				Timestamp: 1730000001,
@@ -38,7 +38,7 @@ func TestEncodeLinePayloadDictionary(t *testing.T) {
 	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 	want := []string{
 		"H|2|s",
-		"S|0|requests_total|env=prod",
+		"S|0|requests|env=prod",
 		"S|1|latency_ms",
 		"c|0|1|1730000000",
 		"c|0|2|1730000001",

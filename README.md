@@ -37,7 +37,7 @@ func main() {
 	}
 
 	// Non-blocking calls; dropped silently if the queue is full.
-	statok.Count("requests_total", 1, "service=api", statok.Label("method", "GET"))
+	statok.Count("requests", 1, "service=api", statok.Label("method", "GET"))
 	statok.Value("latency_ms", 123.4, "service=api", "endpoint=/login")
 
 	// Flush remaining events before exiting.
@@ -118,7 +118,7 @@ Collection cadence:
 - Every 10s: CPU, memory, swap, network, disk I/O
 - Every 60s: filesystem usage + inode counts
 
-Metrics emitted by the agent:
+Metrics emitted by the agent (count metrics are deltas over the collection interval):
 
 | Metric                             | Kind  | Unit    | Labels                                                                 |
 |------------------------------------|-------|---------|------------------------------------------------------------------------|
@@ -127,13 +127,13 @@ Metrics emitted by the agent:
 | `host.swap.capacity_kb`            | value | KB      | `host`, `type` (total,used,free)                                       |
 | `host.fs.capacity_kb`              | value | KB      | `host`, `mount`, `device`, `type` (total,used,free)                    |
 | `host.fs.inodes_count`             | value | count   | `host`, `mount`, `device`, `type` (total,used,free)                    |
-| `host.disk.io_kb_total`            | count | kb      | `host`, `device`, `dir` (read,write)                                   |
-| `host.disk.io_ops_total`           | count | ops     | `host`, `device`, `dir` (read,write)                                   |
-| `host.disk.io_time_ms_total`       | count | ms      | `host`, `device`                                                       |
-| `host.net.kb_total`                | count | kb      | `host`, `iface`, `dir` (rx,tx)                                         |
-| `host.net.packets_total`           | count | packets | `host`, `iface`, `dir` (rx,tx)                                         |
-| `host.net.errors_total`            | count | errors  | `host`, `iface`, `dir` (rx,tx)                                         |
-| `host.net.dropped_total`           | count | packets | `host`, `iface`, `dir` (rx,tx)                                         |
+| `host.disk.io_kb`                  | count | kb      | `host`, `device`, `dir` (read,write)                                   |
+| `host.disk.io_ops`                 | count | ops     | `host`, `device`, `dir` (read,write)                                   |
+| `host.disk.io_time_ms`             | count | ms      | `host`, `device`                                                       |
+| `host.net.kb`                      | count | kb      | `host`, `iface`, `dir` (rx,tx)                                         |
+| `host.net.packets`                 | count | packets | `host`, `iface`, `dir` (rx,tx)                                         |
+| `host.net.errors`                  | count | errors  | `host`, `iface`, `dir` (rx,tx)                                         |
+| `host.net.dropped`                 | count | packets | `host`, `iface`, `dir` (rx,tx)                                         |
 | `docker.container.cpu.usage_pct`   | value | percent | `host`, `service`                                                      |
 | `docker.container.mem.usage_kb`    | value | kb      | `host`, `service`                                                      |
 

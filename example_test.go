@@ -30,7 +30,7 @@ func ExampleClient() {
 		panic(err)
 	}
 	for i := 0; i < 5; i++ {
-		client.Count("requests_total", 1, "method=GET")
+		client.Count("requests", 1, "method=GET")
 		client.Value("latency_ms", 123.4, "method=GET")
 	}
 

@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/disk"
@@ -16,10 +17,15 @@ import (
 
 type DiskIOCollector struct {
 	every time.Duration
+	mu    sync.Mutex
+	prev  map[string]diskIOStats
 }
 
 func NewDiskIO(every time.Duration) *DiskIOCollector {
-	return &DiskIOCollector{every: every}
+	return &DiskIOCollector{
+		every: every,
+		prev:  make(map[string]diskIOStats),
+	}
 }
 
 func (c *DiskIOCollector) ID() string { return "core.diskio" }
@@ -27,20 +33,87 @@ func (c *DiskIOCollector) ID() string { return "core.diskio" }
 func (c *DiskIOCollector) Every() time.Duration { return c.every }
 
 func (c *DiskIOCollector) Collect(_ context.Context, host string) error {
+	var (
+		snapshot map[string]diskIOStats
+		err      error
+	)
 	if runtime.GOOS != "linux" {
-		return collectDiskIOGopsutil(host)
+		snapshot, err = readDiskIOGopsutil()
+	} else {
+		snapshot, err = readDiskIOProc()
 	}
-	return collectDiskIOProc(host)
+	if err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	hostLabel := statok.Label("host", host)
+	for dev, cur := range snapshot {
+		prev, ok := c.prev[dev]
+		c.prev[dev] = cur
+		if !ok {
+			continue
+		}
+
+		deviceLabel := statok.Label("device", dev)
+
+		readBytes := diffUint(prev.readBytes, cur.readBytes)
+		if readBytes > 0 {
+			statok.Count("host.disk.io_kb", float64(readBytes)/1024.0,
+				hostLabel, deviceLabel, statok.Label("dir", "read"),
+			)
+		}
+
+		writeBytes := diffUint(prev.writeBytes, cur.writeBytes)
+		if writeBytes > 0 {
+			statok.Count("host.disk.io_kb", float64(writeBytes)/1024.0,
+				hostLabel, deviceLabel, statok.Label("dir", "write"),
+			)
+		}
+
+		readOps := diffUint(prev.readOps, cur.readOps)
+		if readOps > 0 {
+			statok.Count("host.disk.io_ops", float64(readOps),
+				hostLabel, deviceLabel, statok.Label("dir", "read"),
+			)
+		}
+
+		writeOps := diffUint(prev.writeOps, cur.writeOps)
+		if writeOps > 0 {
+			statok.Count("host.disk.io_ops", float64(writeOps),
+				hostLabel, deviceLabel, statok.Label("dir", "write"),
+			)
+		}
+
+		ioTimeMs := diffUint(prev.ioTimeMs, cur.ioTimeMs)
+		if ioTimeMs > 0 {
+			statok.Count("host.disk.io_time_ms", float64(ioTimeMs),
+				hostLabel, deviceLabel,
+			)
+		}
+	}
+
+	return nil
 }
 
-func collectDiskIOProc(host string) error {
+type diskIOStats struct {
+	readBytes  uint64
+	writeBytes uint64
+	readOps    uint64
+	writeOps   uint64
+	ioTimeMs   uint64
+}
+
+func readDiskIOProc() (map[string]diskIOStats, error) {
 	f, err := os.Open("/proc/diskstats")
 	if err != nil {
-		return fmt.Errorf("open /proc/diskstats: %w", err)
+		return nil, fmt.Errorf("open /proc/diskstats: %w", err)
 	}
 	defer f.Close()
 
-	hostLabel := statok.Label("host", host)
+	stats := make(map[string]diskIOStats)
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		fields := strings.Fields(strings.TrimSpace(scanner.Text()))
@@ -62,67 +135,41 @@ func collectDiskIOProc(host string) error {
 		readBytes := sectorsRead * sectorSize
 		writeBytes := sectorsWritten * sectorSize
 
-		deviceLabel := statok.Label("device", dev)
-
-		statok.Count("host.disk.io_kb_total", float64(readBytes)/1024.0,
-			hostLabel, deviceLabel, statok.Label("dir", "read"),
-		)
-		statok.Count("host.disk.io_kb_total", float64(writeBytes)/1024.0,
-			hostLabel, deviceLabel, statok.Label("dir", "write"),
-		)
-
-		statok.Count("host.disk.io_ops_total", float64(readCompleted),
-			hostLabel, deviceLabel, statok.Label("dir", "read"),
-		)
-		statok.Count("host.disk.io_ops_total", float64(writeCompleted),
-			hostLabel, deviceLabel, statok.Label("dir", "write"),
-		)
-
-		statok.Count("host.disk.io_time_ms_total", float64(timeInIOms),
-			hostLabel, deviceLabel,
-		)
+		stats[dev] = diskIOStats{
+			readBytes:  readBytes,
+			writeBytes: writeBytes,
+			readOps:    readCompleted,
+			writeOps:   writeCompleted,
+			ioTimeMs:   timeInIOms,
+		}
 	}
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scan /proc/diskstats: %w", err)
+		return nil, fmt.Errorf("scan /proc/diskstats: %w", err)
 	}
-	return nil
+	return stats, nil
 }
 
-func collectDiskIOGopsutil(host string) error {
-	stats, err := disk.IOCounters()
+func readDiskIOGopsutil() (map[string]diskIOStats, error) {
+	counters, err := disk.IOCounters()
 	if err != nil {
-		return fmt.Errorf("disk.IOCounters: %w", err)
+		return nil, fmt.Errorf("disk.IOCounters: %w", err)
 	}
 
-	hostLabel := statok.Label("host", host)
-	for dev, s := range stats {
+	stats := make(map[string]diskIOStats, len(counters))
+	for dev, s := range counters {
 		if skipDiskDevice(dev) {
 			continue
 		}
 
-		deviceLabel := statok.Label("device", dev)
-
-		statok.Count("host.disk.io_kb_total", float64(s.ReadBytes)/1024.0,
-			hostLabel, deviceLabel, statok.Label("dir", "read"),
-		)
-		statok.Count("host.disk.io_kb_total", float64(s.WriteBytes)/1024.0,
-			hostLabel, deviceLabel, statok.Label("dir", "write"),
-		)
-
-		statok.Count("host.disk.io_ops_total", float64(s.ReadCount),
-			hostLabel, deviceLabel, statok.Label("dir", "read"),
-		)
-		statok.Count("host.disk.io_ops_total", float64(s.WriteCount),
-			hostLabel, deviceLabel, statok.Label("dir", "write"),
-		)
-
-		if s.IoTime > 0 {
-			statok.Count("host.disk.io_time_ms_total", float64(s.IoTime),
-				hostLabel, deviceLabel,
-			)
+		stats[dev] = diskIOStats{
+			readBytes:  s.ReadBytes,
+			writeBytes: s.WriteBytes,
+			readOps:    s.ReadCount,
+			writeOps:   s.WriteCount,
+			ioTimeMs:   s.IoTime,
 		}
 	}
-	return nil
+	return stats, nil
 }
 
 func skipDiskDevice(dev string) bool {

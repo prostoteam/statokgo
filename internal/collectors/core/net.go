@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	gnet "github.com/shirou/gopsutil/v3/net"
@@ -16,10 +17,15 @@ import (
 
 type NetCollector struct {
 	every time.Duration
+	mu    sync.Mutex
+	prev  map[string]netCounters
 }
 
 func NewNet(every time.Duration) *NetCollector {
-	return &NetCollector{every: every}
+	return &NetCollector{
+		every: every,
+		prev:  make(map[string]netCounters),
+	}
 }
 
 func (c *NetCollector) ID() string { return "core.net" }
@@ -27,21 +33,91 @@ func (c *NetCollector) ID() string { return "core.net" }
 func (c *NetCollector) Every() time.Duration { return c.every }
 
 func (c *NetCollector) Collect(_ context.Context, host string) error {
+	var (
+		snapshot map[string]netCounters
+		err      error
+	)
 	if runtime.GOOS != "linux" {
-		return collectNetGopsutil(host)
+		snapshot, err = readNetGopsutil()
+	} else {
+		snapshot, err = readNetProc()
 	}
-	return collectNetProc(host)
+	if err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	hostLabel := statok.Label("host", host)
+	for iface, cur := range snapshot {
+		prev, ok := c.prev[iface]
+		c.prev[iface] = cur
+		if !ok {
+			continue
+		}
+
+		ifaceLabel := statok.Label("iface", iface)
+		dirRx := statok.Label("dir", "rx")
+		dirTx := statok.Label("dir", "tx")
+
+		rxBytes := diffUint(prev.rxBytes, cur.rxBytes)
+		if rxBytes > 0 {
+			statok.Count("host.net.kb", float64(rxBytes)/1024.0, hostLabel, ifaceLabel, dirRx)
+		}
+		rxPackets := diffUint(prev.rxPackets, cur.rxPackets)
+		if rxPackets > 0 {
+			statok.Count("host.net.packets", float64(rxPackets), hostLabel, ifaceLabel, dirRx)
+		}
+		rxErrs := diffUint(prev.rxErrs, cur.rxErrs)
+		if rxErrs > 0 {
+			statok.Count("host.net.errors", float64(rxErrs), hostLabel, ifaceLabel, dirRx)
+		}
+		rxDrop := diffUint(prev.rxDrop, cur.rxDrop)
+		if rxDrop > 0 {
+			statok.Count("host.net.dropped", float64(rxDrop), hostLabel, ifaceLabel, dirRx)
+		}
+
+		txBytes := diffUint(prev.txBytes, cur.txBytes)
+		if txBytes > 0 {
+			statok.Count("host.net.kb", float64(txBytes)/1024.0, hostLabel, ifaceLabel, dirTx)
+		}
+		txPackets := diffUint(prev.txPackets, cur.txPackets)
+		if txPackets > 0 {
+			statok.Count("host.net.packets", float64(txPackets), hostLabel, ifaceLabel, dirTx)
+		}
+		txErrs := diffUint(prev.txErrs, cur.txErrs)
+		if txErrs > 0 {
+			statok.Count("host.net.errors", float64(txErrs), hostLabel, ifaceLabel, dirTx)
+		}
+		txDrop := diffUint(prev.txDrop, cur.txDrop)
+		if txDrop > 0 {
+			statok.Count("host.net.dropped", float64(txDrop), hostLabel, ifaceLabel, dirTx)
+		}
+	}
+
+	return nil
 }
 
-func collectNetProc(host string) error {
+type netCounters struct {
+	rxBytes   uint64
+	rxPackets uint64
+	rxErrs    uint64
+	rxDrop    uint64
+	txBytes   uint64
+	txPackets uint64
+	txErrs    uint64
+	txDrop    uint64
+}
+
+func readNetProc() (map[string]netCounters, error) {
 	f, err := os.Open("/proc/net/dev")
 	if err != nil {
-		return fmt.Errorf("open /proc/net/dev: %w", err)
+		return nil, fmt.Errorf("open /proc/net/dev: %w", err)
 	}
 	defer f.Close()
 
-	hostLabel := statok.Label("host", host)
-
+	stats := make(map[string]netCounters)
 	scanner := bufio.NewScanner(f)
 	lineNum := 0
 	for scanner.Scan() {
@@ -81,53 +157,47 @@ func collectNetProc(host string) error {
 		txErrs, _ := parseUint(fields[10])
 		txDrop, _ := parseUint(fields[11])
 
-		ifaceLabel := statok.Label("iface", iface)
-
-		dirRx := statok.Label("dir", "rx")
-		statok.Count("host.net.kb_total", float64(rxBytes)/1024.0, hostLabel, ifaceLabel, dirRx)
-		statok.Count("host.net.packets_total", float64(rxPackets), hostLabel, ifaceLabel, dirRx)
-		statok.Count("host.net.errors_total", float64(rxErrs), hostLabel, ifaceLabel, dirRx)
-		statok.Count("host.net.dropped_total", float64(rxDrop), hostLabel, ifaceLabel, dirRx)
-
-		dirTx := statok.Label("dir", "tx")
-		statok.Count("host.net.kb_total", float64(txBytes)/1024.0, hostLabel, ifaceLabel, dirTx)
-		statok.Count("host.net.packets_total", float64(txPackets), hostLabel, ifaceLabel, dirTx)
-		statok.Count("host.net.errors_total", float64(txErrs), hostLabel, ifaceLabel, dirTx)
-		statok.Count("host.net.dropped_total", float64(txDrop), hostLabel, ifaceLabel, dirTx)
+		stats[iface] = netCounters{
+			rxBytes:   rxBytes,
+			rxPackets: rxPackets,
+			rxErrs:    rxErrs,
+			rxDrop:    rxDrop,
+			txBytes:   txBytes,
+			txPackets: txPackets,
+			txErrs:    txErrs,
+			txDrop:    txDrop,
+		}
 	}
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scan /proc/net/dev: %w", err)
+		return nil, fmt.Errorf("scan /proc/net/dev: %w", err)
 	}
-	return nil
+	return stats, nil
 }
 
-func collectNetGopsutil(host string) error {
-	stats, err := gnet.IOCounters(true)
+func readNetGopsutil() (map[string]netCounters, error) {
+	counters, err := gnet.IOCounters(true)
 	if err != nil {
-		return fmt.Errorf("net.IOCounters: %w", err)
+		return nil, fmt.Errorf("net.IOCounters: %w", err)
 	}
 
-	hostLabel := statok.Label("host", host)
-	for _, s := range stats {
+	stats := make(map[string]netCounters, len(counters))
+	for _, s := range counters {
 		if skipNetInterface(s.Name) {
 			continue
 		}
 
-		ifaceLabel := statok.Label("iface", s.Name)
-
-		dirRx := statok.Label("dir", "rx")
-		statok.Count("host.net.kb_total", float64(s.BytesRecv)/1024.0, hostLabel, ifaceLabel, dirRx)
-		statok.Count("host.net.packets_total", float64(s.PacketsRecv), hostLabel, ifaceLabel, dirRx)
-		statok.Count("host.net.errors_total", float64(s.Errin), hostLabel, ifaceLabel, dirRx)
-		statok.Count("host.net.dropped_total", float64(s.Dropin), hostLabel, ifaceLabel, dirRx)
-
-		dirTx := statok.Label("dir", "tx")
-		statok.Count("host.net.kb_total", float64(s.BytesSent)/1024.0, hostLabel, ifaceLabel, dirTx)
-		statok.Count("host.net.packets_total", float64(s.PacketsSent), hostLabel, ifaceLabel, dirTx)
-		statok.Count("host.net.errors_total", float64(s.Errout), hostLabel, ifaceLabel, dirTx)
-		statok.Count("host.net.dropped_total", float64(s.Dropout), hostLabel, ifaceLabel, dirTx)
+		stats[s.Name] = netCounters{
+			rxBytes:   s.BytesRecv,
+			rxPackets: s.PacketsRecv,
+			rxErrs:    s.Errin,
+			rxDrop:    s.Dropin,
+			txBytes:   s.BytesSent,
+			txPackets: s.PacketsSent,
+			txErrs:    s.Errout,
+			txDrop:    s.Dropout,
+		}
 	}
-	return nil
+	return stats, nil
 }
 
 func skipNetInterface(name string) bool {
