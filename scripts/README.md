@@ -1,34 +1,47 @@
 # Deploying statok-agent on Ubuntu
 
-Use `./update` to git pull, build, and run `statok-agent` in the foreground (no systemd/nohup). Run it from inside the repo checkout; Ctrl+C to stop. Default endpoint is `https://statok.dev0101.xyz` (override with `STATOK_ENDPOINT=...`).
+Use the installer to set up a systemd service that starts on boot. Default endpoint is `https://statok.dev0101.xyz`
+(override with `STATOK_ENDPOINT=...` or `STATOK_HOST=...`).
 
-## One-line installer
+## One-line installer (system service)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/prostoteam/statokgo/main/scripts/install_agent.sh | bash -s -- --workload my-workload --verbose
+curl -fsSL https://raw.githubusercontent.com/prostoteam/statokgo/main/scripts/install_agent.sh | sudo bash -s -- --workload my-workload --verbose
 ```
 
 Override defaults with env vars if needed:
 
 ```bash
-GO_VERSION=1.25.4 ./install_agent.sh
+GO_BOOTSTRAP_VERSION=1.22.5 ./install_agent.sh
 ```
 
-Quick use:
+Check status:
 
 ```bash
-cd /path/to/statok-agent
-./update
+sudo systemctl status statok-agent
 ```
 
+User service (no sudo):
+
+```bash
+SYSTEMD_SCOPE=user ./install_agent.sh --workload my-workload --verbose
+systemctl --user status statok-agent
+```
+
+Note: user services start on boot only if lingering is enabled (`loginctl enable-linger $USER`).
+
 Defaults:
-- App dir: current directory (`APP_DIR`)
-- Main package: `./cmd/statok-hostmetrics` (`MAIN_PKG`)
-- Output binary: `./statok-agent` (`OUTPUT`)
+- Service name: `statok-agent` (`SERVICE_NAME`)
+- Install dir: `/usr/local/bin` (`INSTALL_DIR`)
 - Go flags: `-buildvcs=false` (`GOFLAGS`)
 
 Override via env vars if needed:
 
 ```bash
-MAIN_PKG=./cmd/your-main OUTPUT=./statok-agent ./update
+SERVICE_NAME=statok-agent STATOK_HOST_DEFAULT=statok.dev0101.xyz ./install_agent.sh
 ```
+
+## Foreground (debug)
+
+Use `./update` to git pull, build, and run `statok-agent` in the foreground (no systemd/nohup).
+Run it from inside the repo checkout; Ctrl+C to stop.

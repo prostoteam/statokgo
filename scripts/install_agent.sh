@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
-# Install/update statok hostmetrics agent and run it in background.
+# Install/update statok hostmetrics agent and run it via systemd.
 #
 # Design goals (simplified, deterministic, minimal host impact):
 # - Uses system Go if >= GO_MIN_VERSION.
 # - Otherwise downloads a fixed temporary Go toolchain from dl.google.com, uses it to build, and deletes it.
 # - NO apt-get fallback (no package install/remove; avoids modifying host package state).
-# - Idempotent runtime: restarts only the agent started by this script (PID file), avoids duplicates.
+# - Idempotent runtime: replaces the systemd unit and restarts the service.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/prostoteam/statokgo/main/scripts/install_agent.sh | bash -s -- --workload firstvds-proxy --verbose
+#   curl -fsSL https://raw.githubusercontent.com/prostoteam/statokgo/main/scripts/install_agent.sh | sudo bash -s -- --workload firstvds-proxy --verbose
 #
 # Optional env overrides:
 #   GO_MIN_VERSION=1.21.0
 #   GO_BOOTSTRAP_VERSION=1.22.5
 #   BIN_NAME=statok-agent
-#   INSTALL_DIR=$HOME/.local/bin
+#   INSTALL_DIR=/usr/local/bin
+#   SERVICE_NAME=statok-agent
+#   SYSTEMD_SCOPE=system|user
 #   STATOK_HOST_DEFAULT=statok.dev0101.xyz
 #   STATOK_VERSION=latest
 #   GOFLAGS="-buildvcs=false"
@@ -24,12 +26,10 @@ IFS=$'\n\t'
 
 # Install/runtime defaults
 BIN_NAME="${BIN_NAME:-statok-agent}"
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
-BIN_PATH="$INSTALL_DIR/$BIN_NAME"
+SERVICE_NAME="${SERVICE_NAME:-statok-agent}"
+SYSTEMD_SCOPE="${SYSTEMD_SCOPE:-}"
 
 STATOK_HOST_DEFAULT="${STATOK_HOST_DEFAULT:-statok.dev0101.xyz}"
-PID_FILE="${PID_FILE:-$HOME/.statok-agent.pid}"
-LOG_FILE="${LOG_FILE:-$HOME/.statok-agent.log}"
 
 # Build defaults
 GO_MIN_VERSION="${GO_MIN_VERSION:-1.21.0}"
@@ -52,14 +52,17 @@ AGENT_ARGS=()
 err() { echo "statok-install: $*" >&2; exit 1; }
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
 need_cmd() { have_cmd "$1" || err "missing required command: $1"; }
+is_root() { [ "$(id -u)" -eq 0 ]; }
 
 usage() {
   cat <<EOF
 Usage:
-  $(basename "$0") [--workload <value>] [<agent-args...>]
+  $(basename "$0") [--workload <value>] [--system|--user] [<agent-args...>]
 
 Options (installer):
   -w, --workload   Optional workload label passed to agent at runtime
+  --system         Install a system service (default when running as root)
+  --user           Install a user service (default when running as non-root)
   -h, --help       Show this help
 
 Anything else is treated as an agent argument and passed through, e.g.:
@@ -109,6 +112,43 @@ ensure_install_dir() {
   mkdir -p "$INSTALL_DIR"
   [ -d "$INSTALL_DIR" ] || err "install dir is not a directory: $INSTALL_DIR"
   [ -w "$INSTALL_DIR" ] || err "install dir is not writable: $INSTALL_DIR"
+}
+
+init_systemd_defaults() {
+  if [ -z "$SYSTEMD_SCOPE" ]; then
+    if is_root; then
+      SYSTEMD_SCOPE="system"
+    else
+      SYSTEMD_SCOPE="user"
+    fi
+  fi
+
+  case "$SYSTEMD_SCOPE" in
+    system|user) ;;
+    *) err "SYSTEMD_SCOPE must be 'system' or 'user'" ;;
+  esac
+
+  if [ "$SYSTEMD_SCOPE" = "system" ]; then
+    INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+    UNIT_DIR="${UNIT_DIR:-/etc/systemd/system}"
+    UNIT_WANTED_BY="multi-user.target"
+  else
+    INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
+    UNIT_DIR="${UNIT_DIR:-$HOME/.config/systemd/user}"
+    UNIT_WANTED_BY="default.target"
+  fi
+
+  BIN_PATH="$INSTALL_DIR/$BIN_NAME"
+  SERVICE_FILE="$UNIT_DIR/$SERVICE_NAME.service"
+  SYSTEMCTL_CMD=(systemctl)
+  if [ "$SYSTEMD_SCOPE" = "user" ]; then
+    SYSTEMCTL_CMD+=(--user)
+  fi
+}
+
+ensure_unit_dir() {
+  mkdir -p "$UNIT_DIR"
+  [ -d "$UNIT_DIR" ] || err "unit dir is not a directory: $UNIT_DIR"
 }
 
 use_system_go_if_ok() {
@@ -187,59 +227,64 @@ install_agent() {
   echo "statok-install: installed: $BIN_PATH"
 }
 
-pid_is_ours_and_running() {
-  [ -f "$PID_FILE" ] || return 1
-  local pid
-  pid="$(cat "$PID_FILE" 2>/dev/null || true)"
-  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-  kill -0 "$pid" 2>/dev/null || return 1
-  if [ -r "/proc/$pid/cmdline" ]; then
-    tr '\0' ' ' <"/proc/$pid/cmdline" | grep -Fq "$BIN_PATH" || return 1
-  fi
-  return 0
-}
-
-stop_agent_if_running() {
-  if ! pid_is_ours_and_running; then
+systemd_quote() {
+  local s="$1"
+  if [[ "$s" =~ ^[A-Za-z0-9_./:@%+=,-]+$ ]]; then
+    printf '%s' "$s"
     return 0
   fi
-
-  local pid
-  pid="$(cat "$PID_FILE")"
-  echo "statok-install: stopping existing agent (pid $pid)"
-  kill "$pid" 2>/dev/null || true
-
-  for _ in 1 2 3 4 5; do
-    if ! kill -0 "$pid" 2>/dev/null; then
-      rm -f "$PID_FILE"
-      echo "statok-install: stopped"
-      return 0
-    fi
-    sleep 1
-  done
-
-  echo "statok-install: agent did not stop gracefully; sending SIGKILL"
-  kill -9 "$pid" 2>/dev/null || true
-  rm -f "$PID_FILE"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/ }"
+  s="${s//$'\r'/ }"
+  s="${s//$'\t'/ }"
+  printf '"%s"' "$s"
 }
 
-start_agent() {
-  touch "$LOG_FILE" 2>/dev/null || true
-
-  local args=()
+build_exec_start() {
+  local args=() escaped cmd
   if [ -n "${WORKLOAD:-}" ]; then
     args+=( "--workload" "$WORKLOAD" )
   fi
-
-  # Pass through all other agent args collected by parse_args()
   args+=( "${AGENT_ARGS[@]}" )
 
-  echo "statok-install: starting agent in background (host $STATOK_HOST_DEFAULT)"
-  STATOK_HOST="$STATOK_HOST_DEFAULT" setsid "$BIN_PATH" "${args[@]}" >>"$LOG_FILE" 2>&1 < /dev/null &
-  printf '%s\n' "$!" > "$PID_FILE"
+  cmd="$(systemd_quote "$BIN_PATH")"
+  for arg in "${args[@]}"; do
+    cmd+=" $(systemd_quote "$arg")"
+  done
+  printf '%s' "$cmd"
+}
 
-  echo "statok-install: agent started (pid $(cat "$PID_FILE"))"
-  echo "statok-install: logs: $LOG_FILE"
+write_unit() {
+  local exec_start host_env
+  exec_start="$(build_exec_start)"
+  host_env="$(systemd_quote "STATOK_HOST=$STATOK_HOST_DEFAULT")"
+
+  cat >"$SERVICE_FILE" <<EOF
+[Unit]
+Description=Statok hostmetrics agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$exec_start
+Environment=$host_env
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=$UNIT_WANTED_BY
+EOF
+}
+
+reload_systemd() {
+  "${SYSTEMCTL_CMD[@]}" daemon-reload
+}
+
+enable_and_restart_service() {
+  "${SYSTEMCTL_CMD[@]}" enable "$SERVICE_NAME"
+  "${SYSTEMCTL_CMD[@]}" restart "$SERVICE_NAME"
 }
 
 parse_args() {
@@ -249,6 +294,14 @@ parse_args() {
         [ $# -ge 2 ] || err "missing value for $1"
         WORKLOAD="$2"
         shift 2
+        ;;
+      --system)
+        SYSTEMD_SCOPE="system"
+        shift
+        ;;
+      --user)
+        SYSTEMD_SCOPE="user"
+        shift
         ;;
       -h|--help)
         usage; exit 0
@@ -270,10 +323,12 @@ main() {
   need_cmd head
   need_cmd mktemp
   need_cmd tar
-  need_cmd setsid
+  need_cmd systemctl
 
   parse_args "$@"
+  init_systemd_defaults
   ensure_install_dir
+  ensure_unit_dir
 
   TMPDIR="$(mktemp -d -t statok-install.XXXXXX)"
   export TMPDIR
@@ -285,24 +340,38 @@ main() {
   fi
 
   install_agent
-  stop_agent_if_running
-  start_agent
+  write_unit
+  reload_systemd
+  enable_and_restart_service
 
   cat <<EOF
 statok-install: done.
 
 Binary:
   $BIN_PATH
+Service:
+  $SERVICE_NAME ($SYSTEMD_SCOPE)
+
+Unit file:
+  $SERVICE_FILE
 
 Default host:
   $STATOK_HOST_DEFAULT
 
-PID file:
-  $PID_FILE
+To view status:
+  $(printf '%q ' "${SYSTEMCTL_CMD[@]}")status $SERVICE_NAME
 
 To stop:
-  if [ -f "$PID_FILE" ]; then kill \$(cat "$PID_FILE"); rm -f "$PID_FILE"; fi
+  $(printf '%q ' "${SYSTEMCTL_CMD[@]}")stop $SERVICE_NAME
 EOF
+
+  if [ "$SYSTEMD_SCOPE" = "user" ]; then
+    cat <<EOF
+
+Note: user services start on boot only if lingering is enabled:
+  loginctl enable-linger $USER
+EOF
+  fi
 }
 
 main "$@"

@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,7 +26,14 @@ func main() {
 	flag.BoolVar(&verbose, "v", false, "shorthand for --verbose")
 	flag.Parse()
 
-	endpoint := statok.EndpointFromHost(statokIngestHost)
+	endpointHost := statokIngestHost
+	if envEndpoint := strings.TrimSpace(os.Getenv("STATOK_ENDPOINT")); envEndpoint != "" {
+		endpointHost = envEndpoint
+	} else if envHost := strings.TrimSpace(os.Getenv("STATOK_HOST")); envHost != "" {
+		endpointHost = envHost
+	}
+
+	endpoint := statok.EndpointFromHost(endpointHost)
 
 	_, err := statok.Init(statok.Config{
 		Endpoint:          endpoint,

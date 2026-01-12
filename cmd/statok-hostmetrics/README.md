@@ -31,3 +31,8 @@ Agent flags:
 
 - `--workload` / `-w`: add a `workload` label to all emitted metrics.
 - `--verbose` / `-v`: enable verbose client logging.
+
+Environment overrides:
+
+- `STATOK_ENDPOINT`: full ingest URL (highest priority).
+- `STATOK_HOST`: host or URL used to build the ingest endpoint.
