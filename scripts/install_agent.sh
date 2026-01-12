@@ -141,8 +141,10 @@ init_systemd_defaults() {
   BIN_PATH="$INSTALL_DIR/$BIN_NAME"
   SERVICE_FILE="$UNIT_DIR/$SERVICE_NAME.service"
   SYSTEMCTL_CMD=(systemctl)
+  JOURNALCTL_CMD=(journalctl)
   if [ "$SYSTEMD_SCOPE" = "user" ]; then
     SYSTEMCTL_CMD+=(--user)
+    JOURNALCTL_CMD+=(--user)
   fi
 }
 
@@ -360,6 +362,9 @@ Default host:
 
 To view status:
   $(printf '%q ' "${SYSTEMCTL_CMD[@]}")status $SERVICE_NAME
+
+To view logs:
+  $(printf '%q ' "${JOURNALCTL_CMD[@]}")-u $SERVICE_NAME -f
 
 To stop:
   $(printf '%q ' "${SYSTEMCTL_CMD[@]}")stop $SERVICE_NAME
