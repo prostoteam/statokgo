@@ -13,6 +13,7 @@ const (
 	defaultMaxSeriesPerBatch     = 2048
 	defaultFlushInterval         = 500 * time.Millisecond
 	defaultFlushTimeout          = 5 * time.Second
+	defaultEndpointHost          = "statok.dev0101.xyz"
 	defaultIngestPath            = "/api/i/batch"
 	defaultValueAggAutoThreshold = 4
 	workloadMaxLen               = 100
@@ -80,6 +81,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.FlushTimeout <= 0 {
 		c.FlushTimeout = defaultFlushTimeout
+	}
+	if c.Endpoint == "" && c.Transport == nil {
+		c.Endpoint = EndpointFromHost(defaultEndpointHost)
 	}
 	if c.Endpoint != "" {
 		c.Endpoint = ensureIngestPath(c.Endpoint)

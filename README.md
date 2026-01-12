@@ -48,6 +48,9 @@ func main() {
 Use `statok.Count` for counter deltas and `statok.Value` for sampled values. Both accept labels either as `"k=v"`
 strings or via `statok.Label(k, v)` which sanitizes `=` and control characters.
 
+If you call `statok.Init(statok.Config{})`, the client defaults to the public ingest host
+`https://statok.dev0101.xyz/api/i/batch`.
+
 ## Core behaviors
 
 - **Non-blocking hot path**: Count/Value never block or panic. When the bounded queue is full, the event is dropped.
@@ -62,20 +65,20 @@ strings or via `statok.Label(k, v)` which sanitizes `=` and control characters.
 
 `statok.Config` fields (defaults applied when zero-valued):
 
-| Field                   | Default                | Purpose                                                                                                                          |
-|-------------------------|------------------------|----------------------------------------------------------------------------------------------------------------------------------|
-| `Endpoint`              | empty                  | Ingest URL. When set and `Transport` is nil, an `HTTPTransport` is created and `/api/i/batch` is appended if no path is present. |
-| `Transport`             | nil                    | Any implementation of `Transport` (HTTP is provided). Must be safe for concurrent use.                                           |
-| `Logger`                | `log.Default()`        | Receives internal errors and send summaries. Provide your own or silence by using a logger that discards output.                 |
-| `Verbose`               | `false`                | When true, logs the client version at startup and each flush with per-type counts and metric breakdowns.                         |
-| `QueueSize`             | 64_000                 | Bounded channel depth; excess events are dropped.                                                                                |
-| `MaxBatchSize`          | 512                    | Flush when this many events are collected. Also capped by `QueueSize`.                                                           |
-| `MaxSeriesPerBatch`     | 2_048                  | Limits distinct series retained in aggregation maps per batch. Beyond this, events are forwarded without further aggregation.    |
-| `FlushInterval`         | 500ms                  | Periodic flush cadence.                                                                                                          |
-| `FlushTimeout`          | 5s                     | Context timeout applied to each transport send.                                                                                  |
-| `LocalAggCounters`      | false                  | When true, sums counter events with identical metric+labels within the batch.                                                    |
-| `ValueMode`             | `ValueAggregationNone` | Aggregation mode for values (see below).                                                                                         |
-| `ValueAggAutoThreshold` | 4                      | Used by `ValueAggregationAuto`; number of raw samples to forward before switching to averaging.                                  |
+| Field                   | Default                                  | Purpose                                                                                                                          |
+|-------------------------|------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------|
+| `Endpoint`              | `https://statok.dev0101.xyz/api/i/batch` | Ingest URL. When set and `Transport` is nil, an `HTTPTransport` is created and `/api/i/batch` is appended if no path is present. |
+| `Transport`             | nil                                      | Any implementation of `Transport` (HTTP is provided). Must be safe for concurrent use.                                           |
+| `Logger`                | `log.Default()`                          | Receives internal errors and send summaries. Provide your own or silence by using a logger that discards output.                 |
+| `Verbose`               | `false`                                  | When true, logs the client version at startup and each flush with per-type counts and metric breakdowns.                         |
+| `QueueSize`             | 64_000                                   | Bounded channel depth; excess events are dropped.                                                                                |
+| `MaxBatchSize`          | 512                                      | Flush when this many events are collected. Also capped by `QueueSize`.                                                           |
+| `MaxSeriesPerBatch`     | 2_048                                    | Limits distinct series retained in aggregation maps per batch. Beyond this, events are forwarded without further aggregation.    |
+| `FlushInterval`         | 500ms                                    | Periodic flush cadence.                                                                                                          |
+| `FlushTimeout`          | 5s                                       | Context timeout applied to each transport send.                                                                                  |
+| `LocalAggCounters`      | false                                    | When true, sums counter events with identical metric+labels within the batch.                                                    |
+| `ValueMode`             | `ValueAggregationNone`                   | Aggregation mode for values (see below).                                                                                         |
+| `ValueAggAutoThreshold` | 4                                        | Used by `ValueAggregationAuto`; number of raw samples to forward before switching to averaging.                                  |
 
 ## Value aggregation modes
 
