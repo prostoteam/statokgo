@@ -13,7 +13,7 @@ type Runner struct {
 	logLimiter *logLimiter
 }
 
-func Run(ctx context.Context, host string, core []Collector, probes []Probe) {
+func Run(ctx context.Context, core []Collector, probes []Probe) {
 	collectors := make([]Collector, 0, len(core)+len(probes))
 	for _, c := range core {
 		if c != nil {
@@ -44,8 +44,8 @@ func Run(ctx context.Context, host string, core []Collector, probes []Probe) {
 		sem:        make(chan struct{}, MaxConcurrency),
 		logLimiter: newLogLimiter(time.Minute),
 	}
-	logStartup(host, collectors)
-	r.run(ctx, host, collectors)
+	logStartup(collectors)
+	r.run(ctx, collectors)
 	log.Printf("agent: stopped")
 }
 
@@ -71,7 +71,7 @@ func newFromProbe(p Probe) (out Collector) {
 	return p.New()
 }
 
-func (r *Runner) run(ctx context.Context, host string, collectors []Collector) {
+func (r *Runner) run(ctx context.Context, collectors []Collector) {
 	var wg sync.WaitGroup
 	for _, c := range collectors {
 		if c == nil {
@@ -80,7 +80,7 @@ func (r *Runner) run(ctx context.Context, host string, collectors []Collector) {
 		wg.Add(1)
 		go func(c Collector) {
 			defer wg.Done()
-			r.runCollector(ctx, host, c)
+			r.runCollector(ctx, c)
 		}(c)
 	}
 
@@ -88,7 +88,7 @@ func (r *Runner) run(ctx context.Context, host string, collectors []Collector) {
 	wg.Wait()
 }
 
-func (r *Runner) runCollector(ctx context.Context, host string, c Collector) {
+func (r *Runner) runCollector(ctx context.Context, c Collector) {
 	every := c.Every()
 	if every <= 0 {
 		every = CoreFastEvery
@@ -102,12 +102,12 @@ func (r *Runner) runCollector(ctx context.Context, host string, c Collector) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			r.collectOnce(ctx, host, c)
+			r.collectOnce(ctx, c)
 		}
 	}
 }
 
-func (r *Runner) collectOnce(parent context.Context, host string, c Collector) {
+func (r *Runner) collectOnce(parent context.Context, c Collector) {
 	ctx, cancel := context.WithTimeout(parent, CollectTimeout)
 	defer cancel()
 
@@ -118,7 +118,7 @@ func (r *Runner) collectOnce(parent context.Context, host string, c Collector) {
 	}
 	defer func() { <-r.sem }()
 
-	err := safeCollect(ctx, host, c)
+	err := safeCollect(ctx, c)
 	if err == nil {
 		return
 	}
@@ -131,17 +131,17 @@ func (r *Runner) collectOnce(parent context.Context, host string, c Collector) {
 	}
 }
 
-func safeCollect(ctx context.Context, host string, c Collector) (err error) {
+func safeCollect(ctx context.Context, c Collector) (err error) {
 	defer func() {
 		if v := recover(); v != nil {
 			err = fmt.Errorf("panic: %v", v)
 		}
 	}()
-	return c.Collect(ctx, host)
+	return c.Collect(ctx)
 }
 
-func logStartup(host string, collectors []Collector) {
-	log.Printf("agent: started (host=%s collectors=%d timeout=%s max_concurrency=%d)", host, len(collectors), CollectTimeout, MaxConcurrency)
+func logStartup(collectors []Collector) {
+	log.Printf("agent: started (collectors=%d timeout=%s max_concurrency=%d)", len(collectors), CollectTimeout, MaxConcurrency)
 	for _, c := range collectors {
 		if c == nil {
 			continue

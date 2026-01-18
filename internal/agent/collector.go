@@ -10,5 +10,5 @@ import (
 type Collector interface {
 	ID() string
 	Every() time.Duration
-	Collect(ctx context.Context, host string) error
+	Collect(ctx context.Context) error
 }

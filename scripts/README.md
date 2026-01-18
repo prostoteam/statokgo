@@ -30,6 +30,8 @@ systemctl --user status statok-agent
 
 Note: user services start on boot only if lingering is enabled (`loginctl enable-linger $USER`).
 
+If `--workload` is omitted, the agent defaults to the system hostname; passing an empty workload value is an error.
+
 Defaults:
 - Service name: `statok-agent` (`SERVICE_NAME`)
 - Install dir: `/usr/local/bin` (`INSTALL_DIR`)

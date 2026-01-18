@@ -29,7 +29,7 @@ func (c *CPUUsageCollector) ID() string { return "core.cpu_usage" }
 
 func (c *CPUUsageCollector) Every() time.Duration { return c.every }
 
-func (c *CPUUsageCollector) Collect(_ context.Context, host string) error {
+func (c *CPUUsageCollector) Collect(_ context.Context) error {
 	snapshot, err := readCPUTimes()
 	if err != nil {
 		return fmt.Errorf("read times: %w", err)
@@ -37,8 +37,6 @@ func (c *CPUUsageCollector) Collect(_ context.Context, host string) error {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
-	hostLabel := statok.Label("host", host)
 
 	for name, cur := range snapshot {
 		if name == "cpu" { // skip aggregate; only emit per-core series
@@ -73,7 +71,7 @@ func (c *CPUUsageCollector) Collect(_ context.Context, host string) error {
 			}
 			pct := 100.0 * float64(delta) / float64(deltaTotal)
 			statok.Value("host.cpu.usage_pct", pct,
-				hostLabel, cpuLabel, statok.Label("mode", mode),
+				cpuLabel, statok.Label("mode", mode),
 			)
 		}
 

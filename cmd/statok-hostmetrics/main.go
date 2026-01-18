@@ -17,11 +17,24 @@ import (
 
 const statokIngestHost = "statok.dev0101.xyz"
 
+type stringFlag struct {
+	value string
+	set   bool
+}
+
+func (f *stringFlag) String() string { return f.value }
+
+func (f *stringFlag) Set(v string) error {
+	f.value = v
+	f.set = true
+	return nil
+}
+
 func main() {
-	var workload string
 	var verbose bool
-	flag.StringVar(&workload, "workload", "", "workload label forwarded to the Statok backend")
-	flag.StringVar(&workload, "w", "", "shorthand for --workload")
+	var workloadFlag stringFlag
+	flag.Var(&workloadFlag, "workload", "workload label injected into every metric")
+	flag.Var(&workloadFlag, "w", "shorthand for --workload")
 	flag.BoolVar(&verbose, "verbose", false, "enable verbose logging")
 	flag.BoolVar(&verbose, "v", false, "shorthand for --verbose")
 	flag.Parse()
@@ -34,6 +47,13 @@ func main() {
 	}
 
 	endpoint := statok.EndpointFromHost(endpointHost)
+
+	workload := strings.TrimSpace(workloadFlag.value)
+	if workloadFlag.set {
+		if workload == "" {
+			log.Fatal("statok: workload is empty")
+		}
+	}
 
 	_, err := statok.Init(statok.Config{
 		Endpoint:          endpoint,
@@ -50,15 +70,10 @@ func main() {
 		log.Fatalf("statok: init failed: %v", err)
 	}
 
-	host := "unknown"
-	if h, err := os.Hostname(); err == nil && h != "" {
-		host = h
-	}
-
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	agent.Run(ctx, host, catalog.CoreCollectors(), catalog.IntegrationProbes())
+	agent.Run(ctx, catalog.CoreCollectors(), catalog.IntegrationProbes())
 
 	flushCtx, flushCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer flushCancel()

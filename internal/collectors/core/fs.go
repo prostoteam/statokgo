@@ -27,14 +27,14 @@ func (c *FSCollector) ID() string { return "core.fs" }
 
 func (c *FSCollector) Every() time.Duration { return c.every }
 
-func (c *FSCollector) Collect(_ context.Context, host string) error {
+func (c *FSCollector) Collect(_ context.Context) error {
 	if runtime.GOOS != "linux" {
-		return collectFSGopsutil(host)
+		return collectFSGopsutil()
 	}
-	return collectFSProc(host)
+	return collectFSProc()
 }
 
-func collectFSProc(host string) error {
+func collectFSProc() error {
 	f, err := os.Open("/proc/self/mounts")
 	if err != nil {
 		return fmt.Errorf("open /proc/self/mounts: %w", err)
@@ -55,7 +55,7 @@ func collectFSProc(host string) error {
 			continue
 		}
 
-		emitFSStat(host, device, mount)
+		emitFSStat(device, mount)
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("scan /proc/self/mounts: %w", err)
@@ -63,7 +63,7 @@ func collectFSProc(host string) error {
 	return nil
 }
 
-func collectFSGopsutil(host string) error {
+func collectFSGopsutil() error {
 	partitions, err := disk.Partitions(true)
 	if err != nil {
 		return fmt.Errorf("disk.Partitions: %w", err)
@@ -73,12 +73,12 @@ func collectFSGopsutil(host string) error {
 		if skipFSType(p.Fstype) || skipMountpoint(p.Mountpoint) {
 			continue
 		}
-		emitFSStat(host, p.Device, p.Mountpoint)
+		emitFSStat(p.Device, p.Mountpoint)
 	}
 	return nil
 }
 
-func emitFSStat(host string, device, mount string) {
+func emitFSStat(device, mount string) {
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(mount, &st); err != nil {
 		return
@@ -102,13 +102,11 @@ func emitFSStat(host string, device, mount string) {
 	freeKB := freeBytes / 1024
 	usedKB := usedBytes / 1024
 
-	hostLabel := statok.Label("host", host)
 	mountLabel := statok.Label("mount", mount)
 	deviceLabel := statok.Label("device", device)
 
 	emitSpace := func(typ string, v uint64) {
 		statok.Value("host.fs.capacity_kb", float64(v),
-			hostLabel,
 			mountLabel,
 			deviceLabel,
 			statok.Label("type", typ),
@@ -116,7 +114,6 @@ func emitFSStat(host string, device, mount string) {
 	}
 	emitInodes := func(typ string, v uint64) {
 		statok.Value("host.fs.inodes_count", float64(v),
-			hostLabel,
 			mountLabel,
 			deviceLabel,
 			statok.Label("type", typ),

@@ -71,6 +71,7 @@ If you call `statok.Init(statok.Config{})`, the client defaults to the public in
 | `Transport`             | nil                                      | Any implementation of `Transport` (HTTP is provided). Must be safe for concurrent use.                                           |
 | `Logger`                | `log.Default()`                          | Receives internal errors and send summaries. Provide your own or silence by using a logger that discards output.                 |
 | `Verbose`               | `false`                                  | When true, logs the client version at startup and each flush with per-type counts and metric breakdowns.                         |
+| `Workload`              | hostname                                 | Required workload label injected on every metric. When empty, the system hostname is used.                                       |
 | `QueueSize`             | 64_000                                   | Bounded channel depth; excess events are dropped.                                                                                |
 | `MaxBatchSize`          | 512                                      | Flush when this many events are collected. Also capped by `QueueSize`.                                                           |
 | `MaxSeriesPerBatch`     | 2_048                                    | Limits distinct series retained in aggregation maps per batch. Beyond this, events are forwarded without further aggregation.    |
@@ -102,6 +103,8 @@ Counters can be aggregated independently via `LocalAggCounters` (sum within the 
 
 - Labels may be provided as `"k=v"` strings or built with `statok.Label(k, v)`, which replaces `=`, `|`, and newlines
   with `_` to keep the line protocol well-formed.
+- The `workload` label is injected automatically as the first label on every metric; do not pass your own `workload=...`
+  label (events are dropped if you do).
 - Avoid unbounded label cardinality; prefer coarse keys such as `service`, `host`, `region`, `status`.
 
 ## Performance & safety notes

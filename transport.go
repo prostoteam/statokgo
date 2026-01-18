@@ -17,8 +17,6 @@ type Transport interface {
 	Send(ctx context.Context, payload *Payload) error
 }
 
-const workloadHeader = "X-Statok-Workload"
-
 // Payload is the serialized form of a flushed batch.
 type Payload struct {
 	Counters []CounterEvent
@@ -52,8 +50,6 @@ type HTTPTransport struct {
 	Endpoint string
 	Client   *http.Client
 	Header   http.Header
-	// Workload sets the X-Statok-Workload header when non-empty.
-	Workload string
 	Logger   Logger
 }
 
@@ -93,9 +89,6 @@ func (t *HTTPTransport) Send(ctx context.Context, payload *Payload) error {
 		for _, v := range vs {
 			req.Header.Add(k, v)
 		}
-	}
-	if t.Workload != "" {
-		req.Header.Set(workloadHeader, t.Workload)
 	}
 	resp, err := client.Do(req)
 	if err != nil {

@@ -27,12 +27,15 @@ var eventPool = sync.Pool{
 	},
 }
 
-func borrowEvent(typ metricType, name string, value float64, labels []string) *event {
+func borrowEvent(typ metricType, name string, value float64, workloadLabel string, labels []string) *event {
 	e := eventPool.Get().(*event)
 	e.typ = typ
 	e.name = name
 	e.value = value
 	e.labels = e.labels[:0]
+	if trimmed := strings.TrimSpace(workloadLabel); trimmed != "" {
+		e.labels = append(e.labels, trimmed)
+	}
 	for _, l := range labels {
 		if trimmed := strings.TrimSpace(l); trimmed != "" {
 			e.labels = append(e.labels, trimmed)

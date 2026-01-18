@@ -33,7 +33,7 @@ func (c *CPUCollector) ID() string { return "docker.cpu" }
 
 func (c *CPUCollector) Every() time.Duration { return c.every }
 
-func (c *CPUCollector) Collect(parent context.Context, host string) error {
+func (c *CPUCollector) Collect(parent context.Context) error {
 	ctx, cancel := context.WithTimeout(parent, c.timeout)
 	defer cancel()
 
@@ -49,8 +49,6 @@ func (c *CPUCollector) Collect(parent context.Context, host string) error {
 		c.mu.Unlock()
 		return nil
 	}
-
-	hostLabel := statok.Label("host", host)
 
 	active := make(map[string]struct{}, len(containers))
 	for _, ctr := range containers {
@@ -70,7 +68,7 @@ func (c *CPUCollector) Collect(parent context.Context, host string) error {
 		go func() {
 			defer wg.Done()
 			for ctr := range workCh {
-				c.collectContainer(ctx, hostLabel, ctr)
+				c.collectContainer(ctx, ctr)
 			}
 		}()
 	}
@@ -155,7 +153,7 @@ func (c *CPUCollector) listContainers(ctx context.Context, limit int) ([]dockerC
 	return out, nil
 }
 
-func (c *CPUCollector) collectContainer(ctx context.Context, hostLabel string, ctr dockerContainerSummary) {
+func (c *CPUCollector) collectContainer(ctx context.Context, ctr dockerContainerSummary) {
 	if ctr.ID == "" {
 		return
 	}
@@ -173,7 +171,6 @@ func (c *CPUCollector) collectContainer(ctx context.Context, hostLabel string, c
 
 	if usage := stats.MemoryStats.Usage; usage > 0 {
 		statok.Value("docker.container.mem.usage_kb", float64(usage)/1024.0,
-			hostLabel,
 			targetLabel,
 		)
 	}
@@ -212,7 +209,6 @@ func (c *CPUCollector) collectContainer(ctx context.Context, hostLabel string, c
 	}
 
 	statok.Value("docker.container.cpu.usage_pct", pct,
-		hostLabel,
 		targetLabel,
 	)
 }

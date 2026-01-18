@@ -32,7 +32,7 @@ func (c *NetCollector) ID() string { return "core.net" }
 
 func (c *NetCollector) Every() time.Duration { return c.every }
 
-func (c *NetCollector) Collect(_ context.Context, host string) error {
+func (c *NetCollector) Collect(_ context.Context) error {
 	var (
 		snapshot map[string]netCounters
 		err      error
@@ -49,7 +49,6 @@ func (c *NetCollector) Collect(_ context.Context, host string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	hostLabel := statok.Label("host", host)
 	for iface, cur := range snapshot {
 		prev, ok := c.prev[iface]
 		c.prev[iface] = cur
@@ -63,36 +62,36 @@ func (c *NetCollector) Collect(_ context.Context, host string) error {
 
 		rxBytes := diffUint(prev.rxBytes, cur.rxBytes)
 		if rxBytes > 0 {
-			statok.Count("host.net.kb", float64(rxBytes)/1024.0, hostLabel, ifaceLabel, dirRx)
+			statok.Count("host.net.kb", float64(rxBytes)/1024.0, ifaceLabel, dirRx)
 		}
 		rxPackets := diffUint(prev.rxPackets, cur.rxPackets)
 		if rxPackets > 0 {
-			statok.Count("host.net.packets", float64(rxPackets), hostLabel, ifaceLabel, dirRx)
+			statok.Count("host.net.packets", float64(rxPackets), ifaceLabel, dirRx)
 		}
 		rxErrs := diffUint(prev.rxErrs, cur.rxErrs)
 		if rxErrs > 0 {
-			statok.Count("host.net.errors", float64(rxErrs), hostLabel, ifaceLabel, dirRx)
+			statok.Count("host.net.errors", float64(rxErrs), ifaceLabel, dirRx)
 		}
 		rxDrop := diffUint(prev.rxDrop, cur.rxDrop)
 		if rxDrop > 0 {
-			statok.Count("host.net.dropped", float64(rxDrop), hostLabel, ifaceLabel, dirRx)
+			statok.Count("host.net.dropped", float64(rxDrop), ifaceLabel, dirRx)
 		}
 
 		txBytes := diffUint(prev.txBytes, cur.txBytes)
 		if txBytes > 0 {
-			statok.Count("host.net.kb", float64(txBytes)/1024.0, hostLabel, ifaceLabel, dirTx)
+			statok.Count("host.net.kb", float64(txBytes)/1024.0, ifaceLabel, dirTx)
 		}
 		txPackets := diffUint(prev.txPackets, cur.txPackets)
 		if txPackets > 0 {
-			statok.Count("host.net.packets", float64(txPackets), hostLabel, ifaceLabel, dirTx)
+			statok.Count("host.net.packets", float64(txPackets), ifaceLabel, dirTx)
 		}
 		txErrs := diffUint(prev.txErrs, cur.txErrs)
 		if txErrs > 0 {
-			statok.Count("host.net.errors", float64(txErrs), hostLabel, ifaceLabel, dirTx)
+			statok.Count("host.net.errors", float64(txErrs), ifaceLabel, dirTx)
 		}
 		txDrop := diffUint(prev.txDrop, cur.txDrop)
 		if txDrop > 0 {
-			statok.Count("host.net.dropped", float64(txDrop), hostLabel, ifaceLabel, dirTx)
+			statok.Count("host.net.dropped", float64(txDrop), ifaceLabel, dirTx)
 		}
 	}
 

@@ -19,19 +19,22 @@ var (
 
 // Client implements the non-blocking Statok metrics API.
 type Client struct {
-	cfg     Config
-	queue   chan *event
-	cancel  context.CancelFunc
-	done    chan struct{}
-	dropped atomic.Uint64
-	logger  Logger
-	once    sync.Once
+	cfg           Config
+	queue         chan *event
+	cancel        context.CancelFunc
+	done          chan struct{}
+	dropped       atomic.Uint64
+	logger        Logger
+	once          sync.Once
+	workloadLabel string
 }
 
 // NewClient builds a client with the provided configuration and starts the
 // background flushing goroutine.
 func NewClient(cfg Config) (*Client, error) {
-	cfg.applyDefaults()
+	if err := cfg.applyDefaults(); err != nil {
+		return nil, err
+	}
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -43,11 +46,12 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Client{
-		cfg:    cfg,
-		queue:  make(chan *event, cfg.QueueSize),
-		cancel: cancel,
-		done:   make(chan struct{}),
-		logger: cfg.Logger,
+		cfg:           cfg,
+		queue:         make(chan *event, cfg.QueueSize),
+		cancel:        cancel,
+		done:          make(chan struct{}),
+		logger:        cfg.Logger,
+		workloadLabel: Label("workload", cfg.Workload),
 	}
 	if cfg.Verbose && c.logger != nil {
 		c.logger.Printf("statok: client version %s", Version())
@@ -115,18 +119,45 @@ func (c *Client) enqueue(typ metricType, metric string, value float64, labels []
 	if metric == "" {
 		return
 	}
+	if c.workloadLabel == "" {
+		return
+	}
+	if hasWorkloadLabel(labels) {
+		if c.logger != nil {
+			c.logger.Printf("statok: workload label is reserved; drop metric %q", metric)
+		}
+		return
+	}
 	select {
 	case <-c.done:
 		return
 	default:
 	}
-	ev := borrowEvent(typ, metric, value, labels)
+	ev := borrowEvent(typ, metric, value, c.workloadLabel, labels)
 	select {
 	case c.queue <- ev:
 	default:
 		c.dropped.Add(1)
 		releaseEvent(ev)
 	}
+}
+
+func hasWorkloadLabel(labels []string) bool {
+	for _, raw := range labels {
+		label := strings.TrimSpace(raw)
+		if label == "" {
+			continue
+		}
+		if label == "workload" {
+			return true
+		}
+		if idx := strings.IndexByte(label, '='); idx >= 0 {
+			if label[:idx] == "workload" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Dropped returns how many events were rejected because the queue was full.

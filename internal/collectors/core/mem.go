@@ -27,14 +27,14 @@ func (c *MemCollector) ID() string { return "core.mem" }
 
 func (c *MemCollector) Every() time.Duration { return c.every }
 
-func (c *MemCollector) Collect(_ context.Context, host string) error {
+func (c *MemCollector) Collect(_ context.Context) error {
 	if runtime.GOOS != "linux" {
-		return collectMemGopsutil(host)
+		return collectMemGopsutil()
 	}
-	return collectMemProc(host)
+	return collectMemProc()
 }
 
-func collectMemProc(host string) error {
+func collectMemProc() error {
 	f, err := os.Open("/proc/meminfo")
 	if err != nil {
 		return fmt.Errorf("open /proc/meminfo: %w", err)
@@ -74,11 +74,8 @@ func collectMemProc(host string) error {
 		swapUsed = swapTotal - swapFree
 	}
 
-	hostLabel := statok.Label("host", host)
-
 	emitMem := func(typ string, v uint64) {
 		statok.Value("host.mem.capacity_kb", float64(v),
-			hostLabel,
 			statok.Label("type", typ),
 		)
 	}
@@ -89,7 +86,6 @@ func collectMemProc(host string) error {
 
 	emitSwap := func(typ string, v uint64) {
 		statok.Value("host.swap.capacity_kb", float64(v),
-			hostLabel,
 			statok.Label("type", typ),
 		)
 	}
@@ -100,7 +96,7 @@ func collectMemProc(host string) error {
 	return nil
 }
 
-func collectMemGopsutil(host string) error {
+func collectMemGopsutil() error {
 	vm, err := mem.VirtualMemory()
 	if err != nil {
 		return fmt.Errorf("VirtualMemory: %w", err)
@@ -119,11 +115,8 @@ func collectMemGopsutil(host string) error {
 	swapFreeKB := sm.Free / 1024
 	swapUsedKB := sm.Used / 1024
 
-	hostLabel := statok.Label("host", host)
-
 	emitMem := func(typ string, v uint64) {
 		statok.Value("host.mem.capacity_kb", float64(v),
-			hostLabel,
 			statok.Label("type", typ),
 		)
 	}
@@ -134,7 +127,6 @@ func collectMemGopsutil(host string) error {
 
 	emitSwap := func(typ string, v uint64) {
 		statok.Value("host.swap.capacity_kb", float64(v),
-			hostLabel,
 			statok.Label("type", typ),
 		)
 	}
