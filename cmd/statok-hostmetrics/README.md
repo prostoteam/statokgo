@@ -8,8 +8,8 @@ Collection cadence:
 Metrics emitted by the agent (count metrics are deltas over the collection interval).
 All metrics include the `workload` label as the first label; the table lists additional labels.
 
-| Metric                           | Kind  | Unit    | Labels                                                                 |
-|----------------------------------|-------|---------|------------------------------------------------------------------------|
+| Metric                           | Kind  | Unit    | Labels                                                         |
+|----------------------------------|-------|---------|----------------------------------------------------------------|
 | `host.cpu.usage_pct`             | value | percent | `cpu`, `mode` (user,nice,system,idle,iowait,irq,softirq,steal) |
 | `host.mem.capacity_kb`           | value | KB      | `type` (total,used,free,available)                             |
 | `host.swap.capacity_kb`          | value | KB      | `type` (total,used,free)                                       |
