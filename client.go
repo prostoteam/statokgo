@@ -29,13 +29,14 @@ type Client struct {
 	workloadLabel string
 }
 
-// NewClient builds a client with the provided configuration and starts the
-// background flushing goroutine.
-func NewClient(cfg Config) (*Client, error) {
-	if err := cfg.applyDefaults(); err != nil {
+// NewClient builds a client with the provided workload and configuration and starts
+// the background flushing goroutine.
+func NewClient(workload string, cfg Config) (*Client, error) {
+	workload = strings.TrimSpace(workload)
+	if err := validateWorkload(workload); err != nil {
 		return nil, err
 	}
-	if err := cfg.validate(); err != nil {
+	if err := cfg.applyDefaults(); err != nil {
 		return nil, err
 	}
 	if cfg.Transport == nil {
@@ -51,7 +52,7 @@ func NewClient(cfg Config) (*Client, error) {
 		cancel:        cancel,
 		done:          make(chan struct{}),
 		logger:        cfg.Logger,
-		workloadLabel: Label("workload", cfg.Workload),
+		workloadLabel: Label("workload", workload),
 	}
 	if cfg.Verbose && c.logger != nil {
 		c.logger.Printf("statok: client version %s", Version())
@@ -68,8 +69,8 @@ var (
 )
 
 // Init replaces the package-level Client returned by Count/Value helpers.
-func Init(cfg Config) (*Client, error) {
-	client, err := NewClient(cfg)
+func Init(workload string, cfg Config) (*Client, error) {
+	client, err := NewClient(workload, cfg)
 	if err != nil {
 		return nil, err
 	}

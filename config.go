@@ -1,10 +1,8 @@
 package statok
 
 import (
-	"fmt"
 	"log"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 )
@@ -50,9 +48,6 @@ type Config struct {
 	FlushTimeout      time.Duration
 	LocalAggCounters  bool
 	ValueMode         ValueAggregationMode
-	// Workload is injected as a required "workload" label on every metric.
-	// When empty, the system hostname is used. Invalid or missing workload fails initialization.
-	Workload string
 	// ValueAggAutoThreshold controls when ValueAggregationAuto switches a series
 	// from raw forwarding to averaged emission within a flush window.
 	ValueAggAutoThreshold int
@@ -69,18 +64,6 @@ type noopLogger struct{}
 func (noopLogger) Printf(string, ...any) {}
 
 func (c *Config) applyDefaults() error {
-	c.Workload = strings.TrimSpace(c.Workload)
-	if c.Workload == "" {
-		host, err := os.Hostname()
-		if err != nil {
-			return fmt.Errorf("statok: workload not set and hostname lookup failed: %v: %w", err, ErrInvalidWorkload)
-		}
-		host = strings.TrimSpace(host)
-		if host == "" {
-			return fmt.Errorf("statok: workload not set and hostname is empty: %w", ErrInvalidWorkload)
-		}
-		c.Workload = host
-	}
 	if c.QueueSize <= 0 {
 		c.QueueSize = defaultQueueSize
 	}
@@ -121,10 +104,6 @@ func (c *Config) applyDefaults() error {
 		c.ValueAggAutoThreshold = defaultValueAggAutoThreshold
 	}
 	return nil
-}
-
-func (c *Config) validate() error {
-	return validateWorkload(c.Workload)
 }
 
 func validateWorkload(workload string) error {

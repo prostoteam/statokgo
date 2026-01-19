@@ -53,9 +53,18 @@ func main() {
 		if workload == "" {
 			log.Fatal("statok: workload is empty")
 		}
+	} else if workload == "" {
+		host, err := os.Hostname()
+		if err != nil {
+			log.Fatalf("statok: workload not set and hostname lookup failed: %v", err)
+		}
+		workload = strings.TrimSpace(host)
+		if workload == "" {
+			log.Fatal("statok: workload not set and hostname is empty")
+		}
 	}
 
-	_, err := statok.Init(statok.Config{
+	_, err := statok.Init(workload, statok.Config{
 		Endpoint:          endpoint,
 		QueueSize:         64_000,
 		MaxBatchSize:      2_000,
@@ -64,7 +73,6 @@ func main() {
 		LocalAggCounters:  true,
 		ValueMode:         statok.ValueAggregationBatch,
 		Verbose:           verbose,
-		Workload:          workload,
 	})
 	if err != nil {
 		log.Fatalf("statok: init failed: %v", err)

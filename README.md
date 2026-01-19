@@ -25,8 +25,9 @@ import (
 func main() {
 	// Build the ingest URL; path is added automatically when missing.
 	endpoint := statok.EndpointFromHost("statok-ingester.example.com")
+	workload := "payments-api"
 
-	if _, err := statok.Init(statok.Config{
+	if _, err := statok.Init(workload, statok.Config{
 		Endpoint:         endpoint, // creates default HTTP transport
 		FlushInterval:    200 * time.Millisecond,
 		MaxBatchSize:     256,
@@ -48,7 +49,7 @@ func main() {
 Use `statok.Count` for counter deltas and `statok.Value` for sampled values. Both accept labels either as `"k=v"`
 strings or via `statok.Label(k, v)` which sanitizes `=` and control characters.
 
-If you call `statok.Init(statok.Config{})`, the client defaults to the public ingest host
+If you call `statok.Init("my-service", statok.Config{})`, the client defaults to the public ingest host
 `https://statok.dev0101.xyz/api/i/batch`.
 
 ## Core behaviors
@@ -64,6 +65,7 @@ If you call `statok.Init(statok.Config{})`, the client defaults to the public in
 ## Configuration reference
 
 `statok.Config` fields (defaults applied when zero-valued):
+Workload is supplied separately to `Init`/`NewClient` and becomes the required `workload` label on every metric.
 
 | Field                   | Default                                  | Purpose                                                                                                                          |
 |-------------------------|------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------|
@@ -71,7 +73,6 @@ If you call `statok.Init(statok.Config{})`, the client defaults to the public in
 | `Transport`             | nil                                      | Any implementation of `Transport` (HTTP is provided). Must be safe for concurrent use.                                           |
 | `Logger`                | `log.Default()`                          | Receives internal errors and send summaries. Provide your own or silence by using a logger that discards output.                 |
 | `Verbose`               | `false`                                  | When true, logs the client version at startup and each flush with per-type counts and metric breakdowns.                         |
-| `Workload`              | hostname                                 | Required workload label injected on every metric. When empty, the system hostname is used.                                       |
 | `QueueSize`             | 64_000                                   | Bounded channel depth; excess events are dropped.                                                                                |
 | `MaxBatchSize`          | 512                                      | Flush when this many events are collected. Also capped by `QueueSize`.                                                           |
 | `MaxSeriesPerBatch`     | 2_048                                    | Limits distinct series retained in aggregation maps per batch. Beyond this, events are forwarded without further aggregation.    |
@@ -92,7 +93,7 @@ Counters can be aggregated independently via `LocalAggCounters` (sum within the 
 
 ## Lifecycle
 
-- Create a client with `statok.NewClient(cfg)` or set the package-level default with `statok.Init(cfg)` and then call
+- Create a client with `statok.NewClient(workload, cfg)` or set the package-level default with `statok.Init(workload, cfg)` and then call
   `statok.Count/Value` helpers.
 - Call `client.Close(ctx)` during shutdown to flush the queue. Close drains without blocking the caller goroutine; it
   honors the provided context for the final send.
@@ -103,7 +104,7 @@ Counters can be aggregated independently via `LocalAggCounters` (sum within the 
 
 - Labels may be provided as `"k=v"` strings or built with `statok.Label(k, v)`, which replaces `=`, `|`, and newlines
   with `_` to keep the line protocol well-formed.
-- The `workload` label is injected automatically as the first label on every metric; do not pass your own `workload=...`
+- The `workload` label is injected automatically from the workload argument passed to `Init`/`NewClient` as the first label on every metric; do not pass your own `workload=...`
   label (events are dropped if you do).
 - Avoid unbounded label cardinality; prefer coarse keys such as `service`, `host`, `region`, `status`.
 

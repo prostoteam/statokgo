@@ -19,7 +19,7 @@ func (m *memoryTransport) Send(_ context.Context, p *statok.Payload) error {
 
 func ExampleClient() {
 	mt := &memoryTransport{}
-	client, err := statok.NewClient(statok.Config{
+	client, err := statok.NewClient("example-app", statok.Config{
 		Transport:        mt,
 		FlushInterval:    50 * time.Millisecond,
 		MaxBatchSize:     16,

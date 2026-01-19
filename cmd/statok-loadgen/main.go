@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	statok "github.com/prostoteam/statokgo"
@@ -34,7 +35,16 @@ type metricSpec struct {
 }
 
 func main() {
-	_, err := statok.Init(statok.Config{
+	workload, err := os.Hostname()
+	if err != nil {
+		log.Fatalf("statok: workload hostname lookup failed: %v", err)
+	}
+	workload = strings.TrimSpace(workload)
+	if workload == "" {
+		log.Fatal("statok: workload hostname is empty")
+	}
+
+	_, err = statok.Init(workload, statok.Config{
 		Endpoint:          "http://localhost:8085/api/i/batch",
 		QueueSize:         400_000,
 		MaxBatchSize:      1_000_000,
