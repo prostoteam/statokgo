@@ -22,8 +22,14 @@ type Instance struct {
 
 type instanceState struct {
 	Instance
-	client      *mongo.Client
-	nextAttempt time.Time
+	client       *mongo.Client
+	nextAttempt  time.Time
+	prevOps      opCounters
+	hasPrevOps   bool
+	prevOpLat    opLatencies
+	hasPrevLat   bool
+	prevEvict    int64
+	hasPrevEvict bool
 }
 
 type Collector struct {
@@ -83,6 +89,44 @@ type serverStatus struct {
 		Current   int64 `bson:"current"`
 		Available int64 `bson:"available"`
 	} `bson:"connections"`
+	Mem         memStats         `bson:"mem"`
+	WiredTiger  wiredTigerStatus `bson:"wiredTiger"`
+	OpCounters  opCounters       `bson:"opcounters"`
+	OpLatencies opLatencies      `bson:"opLatencies"`
+}
+
+type opCounters struct {
+	Insert  int64 `bson:"insert"`
+	Query   int64 `bson:"query"`
+	Update  int64 `bson:"update"`
+	Delete  int64 `bson:"delete"`
+	GetMore int64 `bson:"getmore"`
+	Command int64 `bson:"command"`
+}
+
+type opLatencies struct {
+	Reads    opLatency `bson:"reads"`
+	Writes   opLatency `bson:"writes"`
+	Commands opLatency `bson:"commands"`
+}
+
+type opLatency struct {
+	Latency int64 `bson:"latency"`
+	Ops     int64 `bson:"ops"`
+}
+
+type memStats struct {
+	Resident int64 `bson:"resident"`
+}
+
+type wiredTigerStatus struct {
+	Cache wiredTigerCache `bson:"cache"`
+}
+
+type wiredTigerCache struct {
+	BytesCurrent int64 `bson:"bytes currently in the cache"`
+	BytesMax     int64 `bson:"maximum bytes configured"`
+	Evictions    int64 `bson:"evictions"`
 }
 
 func (c *Collector) collectInstance(ctx context.Context, inst *instanceState) error {
@@ -104,18 +148,95 @@ func (c *Collector) collectInstance(ctx context.Context, inst *instanceState) er
 		return fmt.Errorf("serverStatus: %w", err)
 	}
 
-	emit := func(typ string, v int64) {
+	instanceLabel := statok.Label("instance", inst.Label)
+	emitConnection := func(typ string, v int64) {
 		if v < 0 {
 			return
 		}
 		statok.Value("mongo.connections", float64(v),
-			statok.Label("instance", inst.Label),
+			instanceLabel,
 			statok.Label("type", typ),
 		)
 	}
-	emit("current", status.Connections.Current)
-	emit("available", status.Connections.Available)
+	emitConnection("current", status.Connections.Current)
+	emitConnection("available", status.Connections.Available)
+	if status.Mem.Resident >= 0 {
+		statok.Value("mongo.mem.resident_mb", float64(status.Mem.Resident), instanceLabel)
+	}
+	emitWTCache := func(typ string, bytes int64) {
+		if bytes < 0 {
+			return
+		}
+		kb := float64(bytes) / 1024.0
+		statok.Value("mongo.wt.cache.kb", kb,
+			instanceLabel,
+			statok.Label("type", typ),
+		)
+	}
+	emitWTCache("used", status.WiredTiger.Cache.BytesCurrent)
+	emitWTCache("max", status.WiredTiger.Cache.BytesMax)
+	if inst.hasPrevEvict {
+		deltaEvict := diffCounter(inst.prevEvict, status.WiredTiger.Cache.Evictions)
+		if deltaEvict > 0 {
+			statok.Count("mongo.wt.cache.evictions_count", float64(deltaEvict), instanceLabel)
+		}
+	}
+	inst.prevEvict = status.WiredTiger.Cache.Evictions
+	inst.hasPrevEvict = true
+
+	if inst.hasPrevOps {
+		emitOp := func(typ string, delta int64) {
+			if delta <= 0 {
+				return
+			}
+			statok.Count("mongo.ops_count", float64(delta),
+				instanceLabel,
+				statok.Label("type", typ),
+			)
+		}
+		emitOp("insert", diffCounter(inst.prevOps.Insert, status.OpCounters.Insert))
+		emitOp("query", diffCounter(inst.prevOps.Query, status.OpCounters.Query))
+		emitOp("update", diffCounter(inst.prevOps.Update, status.OpCounters.Update))
+		emitOp("delete", diffCounter(inst.prevOps.Delete, status.OpCounters.Delete))
+		emitOp("getmore", diffCounter(inst.prevOps.GetMore, status.OpCounters.GetMore))
+		emitOp("command", diffCounter(inst.prevOps.Command, status.OpCounters.Command))
+	}
+	inst.prevOps = status.OpCounters
+	inst.hasPrevOps = true
+
+	if inst.hasPrevLat {
+		emitLatency := func(typ string, prev, cur opLatency) {
+			deltaOps := diffCounter(prev.Ops, cur.Ops)
+			if deltaOps <= 0 {
+				return
+			}
+			deltaLatency := diffCounter(prev.Latency, cur.Latency)
+			if deltaLatency <= 0 {
+				return
+			}
+			avgMs := float64(deltaLatency) / float64(deltaOps) / 1000.0
+			if avgMs <= 0 {
+				return
+			}
+			statok.Value("mongo.op_latency_ms", avgMs,
+				instanceLabel,
+				statok.Label("type", typ),
+			)
+		}
+		emitLatency("reads", inst.prevOpLat.Reads, status.OpLatencies.Reads)
+		emitLatency("writes", inst.prevOpLat.Writes, status.OpLatencies.Writes)
+		emitLatency("commands", inst.prevOpLat.Commands, status.OpLatencies.Commands)
+	}
+	inst.prevOpLat = status.OpLatencies
+	inst.hasPrevLat = true
 	return nil
+}
+
+func diffCounter(prev, cur int64) int64 {
+	if cur >= prev {
+		return cur - prev
+	}
+	return 0
 }
 
 func (c *Collector) ensureClient(ctx context.Context, inst *instanceState, timeout time.Duration) (*mongo.Client, error) {

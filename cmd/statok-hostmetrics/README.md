@@ -25,6 +25,11 @@ All metrics include the `workload` label as the first label; the table lists add
 | `docker.container.cpu.usage_pct` | value | percent | `service`                                                      |
 | `docker.container.mem.usage_kb`  | value | kb      | `service`                                                      |
 | `mongo.connections`              | value | count   | `instance`, `type` (current,available)                         |
+| `mongo.mem.resident_mb`          | value | mb      | `instance`                                                     |
+| `mongo.wt.cache.kb`              | value | kb      | `instance`, `type` (used,max)                                  |
+| `mongo.wt.cache.evictions_count` | count | count   | `instance`                                                     |
+| `mongo.ops_count`                | count | ops     | `instance`, `type` (insert,query,update,delete,getmore,command) |
+| `mongo.op_latency_ms`            | value | ms      | `instance`, `type` (reads,writes,commands)                      |
 
 Docker metrics are enabled automatically when a local Docker socket is detected at `/var/run/docker.sock`. The label
 mode is currently hardcoded to `service` (compose service / swarm service / fallback container name).
