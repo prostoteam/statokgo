@@ -48,6 +48,7 @@ Config file (optional):
 - Override path via `--config` / `-c` or `STATOK_CONFIG`.
 - When running as root, the system path is checked before the user path; otherwise user path is preferred.
 - `${VAR}` expansion is supported for all string fields.
+- `env_files` can provide `${VAR}` values from simple `KEY=VALUE` files (later files override earlier ones; process env is used as a fallback). Missing files are ignored. Optional `export ` prefix is supported. Values may be wrapped in single or double quotes (quotes are stripped).
 - Config values override flags for overlapping fields (e.g., `agent.workload`); an empty workload is an error.
 
 Example:
@@ -55,6 +56,8 @@ Example:
 ```yaml
 agent:
   workload: "my-workload"
+env_files:
+  - "/etc/statok/agent.env"
 
 integrations:
   mongo:

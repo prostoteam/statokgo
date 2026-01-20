@@ -22,6 +22,7 @@ const (
 )
 
 type fileConfig struct {
+	EnvFiles     []string           `yaml:"env_files"`
 	Agent        agentConfig        `yaml:"agent"`
 	Integrations integrationsConfig `yaml:"integrations"`
 }
@@ -141,7 +142,11 @@ func loadFileConfig(source configSource) (*fileConfig, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", source.Path, err)
 	}
-	expandEnvStrings(cfg)
+	envMap, err := loadEnvFiles(cfg.EnvFiles)
+	if err != nil {
+		return nil, err
+	}
+	expandEnvStringsWithMap(cfg, envMap)
 	return cfg, nil
 }
 
@@ -206,26 +211,33 @@ func resolveWorkload(cfg *fileConfig, workloadFlag string, workloadFlagSet bool)
 	return workload, nil
 }
 
-func expandEnvStrings(v any) {
+func expandEnvStringsWithMap(v any, env map[string]string) {
 	rv := reflect.ValueOf(v)
 	if rv.Kind() != reflect.Ptr || rv.IsNil() {
 		return
 	}
-	expandEnvValue(rv.Elem())
+	expandEnvValueWithMap(rv.Elem(), env)
 }
 
-func expandEnvValue(v reflect.Value) {
+func expandEnvValueWithMap(v reflect.Value, env map[string]string) {
 	if !v.IsValid() {
 		return
 	}
 	switch v.Kind() {
 	case reflect.String:
 		if v.CanSet() {
-			v.SetString(os.ExpandEnv(v.String()))
+			v.SetString(os.Expand(v.String(), func(key string) string {
+				if env != nil {
+					if val, ok := env[key]; ok {
+						return val
+					}
+				}
+				return os.Getenv(key)
+			}))
 		}
 	case reflect.Ptr:
 		if !v.IsNil() {
-			expandEnvValue(v.Elem())
+			expandEnvValueWithMap(v.Elem(), env)
 		}
 	case reflect.Struct:
 		for i := 0; i < v.NumField(); i++ {
@@ -233,13 +245,61 @@ func expandEnvValue(v reflect.Value) {
 			if !field.CanSet() && field.Kind() == reflect.String {
 				continue
 			}
-			expandEnvValue(field)
+			expandEnvValueWithMap(field, env)
 		}
 	case reflect.Slice:
 		for i := 0; i < v.Len(); i++ {
-			expandEnvValue(v.Index(i))
+			expandEnvValueWithMap(v.Index(i), env)
 		}
 	}
+}
+
+func loadEnvFiles(paths []string) (map[string]string, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	env := make(map[string]string)
+	for _, rawPath := range paths {
+		path := expandHome(strings.TrimSpace(rawPath))
+		if path == "" {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("read env file %s: %w", path, err)
+		}
+		lines := strings.Split(string(data), "\n")
+		for i, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.HasPrefix(line, "export ") {
+				line = strings.TrimSpace(line[len("export "):])
+			} else if strings.HasPrefix(line, "export\t") {
+				line = strings.TrimSpace(line[len("export\t"):])
+			}
+			eq := strings.IndexByte(line, '=')
+			if eq <= 0 {
+				return nil, fmt.Errorf("env file %s:%d: expected KEY=VALUE", path, i+1)
+			}
+			key := strings.TrimSpace(line[:eq])
+			val := strings.TrimSpace(line[eq+1:])
+			if key == "" {
+				return nil, fmt.Errorf("env file %s:%d: empty key", path, i+1)
+			}
+			if len(val) >= 2 {
+				if (val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'') {
+					val = val[1 : len(val)-1]
+				}
+			}
+			env[key] = val
+		}
+	}
+	return env, nil
 }
 
 func fileExists(path string) bool {
