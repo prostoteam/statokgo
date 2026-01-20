@@ -13,6 +13,7 @@ import (
 	statok "github.com/prostoteam/statokgo"
 	"github.com/prostoteam/statokgo/internal/agent"
 	"github.com/prostoteam/statokgo/internal/agent/catalog"
+	"github.com/prostoteam/statokgo/internal/collectors/mongo"
 )
 
 const statokIngestHost = "statok.dev0101.xyz"
@@ -33,8 +34,11 @@ func (f *stringFlag) Set(v string) error {
 func main() {
 	var verbose bool
 	var workloadFlag stringFlag
+	var configPath string
 	flag.Var(&workloadFlag, "workload", "workload label injected into every metric")
 	flag.Var(&workloadFlag, "w", "shorthand for --workload")
+	flag.StringVar(&configPath, "config", "", "path to YAML config (optional)")
+	flag.StringVar(&configPath, "c", "", "shorthand for --config")
 	flag.BoolVar(&verbose, "verbose", false, "enable verbose logging")
 	flag.BoolVar(&verbose, "v", false, "shorthand for --verbose")
 	flag.Parse()
@@ -48,22 +52,40 @@ func main() {
 
 	endpoint := statok.EndpointFromHost(endpointHost)
 
-	workload := strings.TrimSpace(workloadFlag.value)
-	if workloadFlag.set {
-		if workload == "" {
-			log.Fatal("statok: workload is empty")
-		}
-	} else if workload == "" {
-		host, err := os.Hostname()
-		if err != nil {
-			log.Fatalf("statok: workload not set and hostname lookup failed: %v", err)
-		}
-		workload = strings.TrimSpace(host)
-		if workload == "" {
-			log.Fatal("statok: workload not set and hostname is empty")
-		}
+	configSource, err := resolveConfigSource(configPath)
+	if err != nil {
+		log.Fatalf("statok: config resolution failed: %v", err)
+	}
+	fileCfg, err := loadFileConfig(configSource)
+	if err != nil {
+		log.Fatalf("statok: config load failed: %v", err)
+	}
+	runtimeCfg, err := resolveRuntimeConfig(fileCfg, workloadFlag.value, workloadFlag.set)
+	if err != nil {
+		log.Fatalf("statok: config invalid: %v", err)
+	}
+	if configSource.Path != "" {
+		log.Printf("statok: config loaded from %s", configSource.Path)
+	} else {
+		log.Printf("statok: no config found, using defaults")
+	}
+	if err := initClient(runtimeCfg.Workload, endpoint, verbose); err != nil {
+		log.Fatalf("statok: init failed: %v", err)
 	}
 
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	core := catalog.CoreCollectors()
+	probes := catalog.IntegrationProbes()
+	if runtimeCfg.MongoEnabled {
+		probes = append(probes, mongo.NewProbe(runtimeCfg.MongoInstances, agent.MongoEvery, mongoRetryInterval))
+	}
+	agent.Run(ctx, core, probes)
+	flushAndClose()
+}
+
+func initClient(workload string, endpoint string, verbose bool) error {
 	_, err := statok.Init(workload, statok.Config{
 		Endpoint:          endpoint,
 		QueueSize:         64_000,
@@ -74,15 +96,10 @@ func main() {
 		ValueMode:         statok.ValueAggregationBatch,
 		Verbose:           verbose,
 	})
-	if err != nil {
-		log.Fatalf("statok: init failed: %v", err)
-	}
+	return err
+}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer cancel()
-
-	agent.Run(ctx, catalog.CoreCollectors(), catalog.IntegrationProbes())
-
+func flushAndClose() {
 	flushCtx, flushCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer flushCancel()
 	if client := statok.Default(); client != nil {

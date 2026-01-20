@@ -86,6 +86,7 @@ func (r *Runner) run(ctx context.Context, collectors []Collector) {
 
 	<-ctx.Done()
 	wg.Wait()
+	r.closeCollectors(collectors)
 }
 
 func (r *Runner) runCollector(ctx context.Context, c Collector) {
@@ -160,6 +161,30 @@ func logProbe(id string, detected bool, reason string) {
 		return
 	}
 	log.Printf("probe %s: %s: %s", id, status, reason)
+}
+
+func (r *Runner) closeCollectors(collectors []Collector) {
+	ctx, cancel := context.WithTimeout(context.Background(), CollectTimeout)
+	defer cancel()
+	for _, c := range collectors {
+		if c == nil {
+			continue
+		}
+		closer, ok := c.(CollectorCloser)
+		if !ok {
+			continue
+		}
+		func() {
+			defer func() {
+				if v := recover(); v != nil {
+					log.Printf("collector %s: close panic: %v", c.ID(), v)
+				}
+			}()
+			if err := closer.Close(ctx); err != nil {
+				log.Printf("collector %s: close failed: %v", c.ID(), err)
+			}
+		}()
+	}
 }
 
 type logLimiter struct {

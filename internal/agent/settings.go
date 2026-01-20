@@ -10,4 +10,5 @@ const (
 	CoreSlowEvery = 60 * time.Second
 
 	DockerEvery = 10 * time.Second
+	MongoEvery  = 10 * time.Second
 )

@@ -24,6 +24,7 @@ All metrics include the `workload` label as the first label; the table lists add
 | `host.net.dropped`               | count | packets | `iface`, `dir` (rx,tx)                                         |
 | `docker.container.cpu.usage_pct` | value | percent | `service`                                                      |
 | `docker.container.mem.usage_kb`  | value | kb      | `service`                                                      |
+| `mongo.connections`              | value | count   | `instance`, `type` (current,available)                         |
 
 Docker metrics are enabled automatically when a local Docker socket is detected at `/var/run/docker.sock`. The label
 mode is currently hardcoded to `service` (compose service / swarm service / fallback container name).
@@ -31,9 +32,35 @@ mode is currently hardcoded to `service` (compose service / swarm service / fall
 Agent flags:
 
 - `--workload` / `-w`: set the workload label (defaults to hostname; empty value is an error).
+- `--config` / `-c`: path to the YAML config file (optional).
 - `--verbose` / `-v`: enable verbose client logging.
 
 Environment overrides:
 
 - `STATOK_ENDPOINT`: full ingest URL (highest priority).
 - `STATOK_HOST`: host or URL used to build the ingest endpoint.
+- Endpoint env vars are evaluated outside the config and always apply.
+
+Config file (optional):
+
+- System: `/etc/statok/hostmetrics.yaml`
+- User: `$XDG_CONFIG_HOME/statok/hostmetrics.yaml` (fallback: `~/.config/statok/hostmetrics.yaml`)
+- Override path via `--config` / `-c` or `STATOK_CONFIG`.
+- When running as root, the system path is checked before the user path; otherwise user path is preferred.
+- `${VAR}` expansion is supported for all string fields.
+- Config values override flags for overlapping fields (e.g., `agent.workload`); an empty workload is an error.
+
+Example:
+
+```yaml
+agent:
+  workload: "my-workload"
+
+integrations:
+  mongo:
+    enabled: true
+    instances:
+      - uri: "mongodb://monitor:${MONGO_PASSWORD}@localhost:27017/admin"
+```
+
+Mongo note: `serverStatus` runs against the `admin` database and requires appropriate permissions for the configured user.

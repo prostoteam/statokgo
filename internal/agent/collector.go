@@ -12,3 +12,8 @@ type Collector interface {
 	Every() time.Duration
 	Collect(ctx context.Context) error
 }
+
+// CollectorCloser is an optional interface for collectors that need shutdown cleanup.
+type CollectorCloser interface {
+	Close(ctx context.Context) error
+}
