@@ -52,10 +52,11 @@ func main() {
 
 	endpoint := statok.EndpointFromHost(endpointHost)
 
-	configSource, err := resolveConfigSource(configPath)
+	configSource, configPaths, err := resolveConfigSource(configPath)
 	if err != nil {
 		log.Fatalf("statok: config resolution failed: %v", err)
 	}
+	logConfigPaths(configPaths)
 	fileCfg, err := loadFileConfig(configSource)
 	if err != nil {
 		log.Fatalf("statok: config load failed: %v", err)
@@ -105,4 +106,12 @@ func flushAndClose() {
 	if client := statok.Default(); client != nil {
 		_ = client.Close(flushCtx)
 	}
+}
+
+func logConfigPaths(paths []string) {
+	if len(paths) == 0 {
+		log.Printf("statok: config search paths: (none)")
+		return
+	}
+	log.Printf("statok: config search paths: %s", strings.Join(paths, ", "))
 }

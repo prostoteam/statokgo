@@ -54,20 +54,22 @@ type configSource struct {
 	Explicit bool
 }
 
-func resolveConfigSource(flagPath string) (configSource, error) {
+func resolveConfigSource(flagPath string) (configSource, []string, error) {
 	if path := strings.TrimSpace(flagPath); path != "" {
-		return configSource{Path: expandHome(path), Explicit: true}, nil
+		path = expandHome(path)
+		return configSource{Path: path, Explicit: true}, []string{path}, nil
 	}
 	if envPath := strings.TrimSpace(os.Getenv(configEnvVar)); envPath != "" {
-		return configSource{Path: expandHome(envPath), Explicit: true}, nil
+		envPath = expandHome(envPath)
+		return configSource{Path: envPath, Explicit: true}, []string{envPath}, nil
 	}
 	paths := defaultConfigPaths()
 	for _, path := range paths {
 		if fileExists(path) {
-			return configSource{Path: path}, nil
+			return configSource{Path: path}, paths, nil
 		}
 	}
-	return configSource{}, nil
+	return configSource{}, paths, nil
 }
 
 func defaultConfigPaths() []string {
