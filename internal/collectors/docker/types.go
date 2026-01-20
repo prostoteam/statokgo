@@ -14,8 +14,16 @@ type dockerContainerSummary struct {
 }
 
 type dockerStats struct {
-	CPUStats    dockerCPUStats    `json:"cpu_stats"`
-	MemoryStats dockerMemoryStats `json:"memory_stats"`
+	CPUStats    dockerCPUStats                `json:"cpu_stats"`
+	MemoryStats dockerMemoryStats             `json:"memory_stats"`
+	Networks    map[string]dockerNetworkStats `json:"networks"`
+}
+
+type dockerContainerInfo struct {
+	RestartCount uint64 `json:"RestartCount"`
+	State        struct {
+		RestartCount uint64 `json:"RestartCount"`
+	} `json:"State"`
 }
 
 type dockerCPUStats struct {
@@ -36,4 +44,14 @@ type dockerCPUPrev struct {
 
 type dockerMemoryStats struct {
 	Usage uint64 `json:"usage"`
+}
+
+type dockerNetworkStats struct {
+	RxBytes uint64 `json:"rx_bytes"`
+	TxBytes uint64 `json:"tx_bytes"`
+}
+
+type dockerNetPrev struct {
+	rxBytes uint64
+	txBytes uint64
 }

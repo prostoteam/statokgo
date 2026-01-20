@@ -8,26 +8,28 @@ Collection cadence:
 Metrics emitted by the agent (count metrics are deltas over the collection interval).
 All metrics include the `workload` label as the first label; the table lists additional labels.
 
-| Metric                           | Kind  | Unit    | Labels                                                         |
-|----------------------------------|-------|---------|----------------------------------------------------------------|
-| `host.cpu.usage_pct`             | value | percent | `cpu`, `mode` (user,nice,system,idle,iowait,irq,softirq,steal) |
-| `host.mem.capacity_kb`           | value | KB      | `type` (total,used,free,available)                             |
-| `host.swap.capacity_kb`          | value | KB      | `type` (total,used,free)                                       |
-| `host.fs.capacity_kb`            | value | KB      | `mount`, `device`, `type` (total,used,free)                    |
-| `host.fs.inodes_count`           | value | count   | `mount`, `device`, `type` (total,used,free)                    |
-| `host.disk.io_kb`                | count | kb      | `device`, `dir` (read,write)                                   |
-| `host.disk.io_ops`               | count | ops     | `device`, `dir` (read,write)                                   |
-| `host.disk.io_time_ms`           | count | ms      | `device`                                                       |
-| `host.net.kb`                    | count | kb      | `iface`, `dir` (rx,tx)                                         |
-| `host.net.packets`               | count | packets | `iface`, `dir` (rx,tx)                                         |
-| `host.net.errors`                | count | errors  | `iface`, `dir` (rx,tx)                                         |
-| `host.net.dropped`               | count | packets | `iface`, `dir` (rx,tx)                                         |
-| `docker.container.cpu.usage_pct` | value | percent | `service`                                                      |
-| `docker.container.mem.usage_kb`  | value | kb      | `service`                                                      |
-| `mongo.connections`              | value | count   | `instance`, `type` (current,available)                         |
-| `mongo.mem.resident_mb`          | value | mb      | `instance`                                                     |
-| `mongo.wt.cache.kb`              | value | kb      | `instance`, `type` (used,max)                                  |
-| `mongo.wt.cache.evictions_count` | count | count   | `instance`                                                     |
+| Metric                           | Kind  | Unit    | Labels                                                          |
+|----------------------------------|-------|---------|-----------------------------------------------------------------|
+| `host.cpu.usage_pct`             | value | percent | `cpu`, `mode` (user,nice,system,idle,iowait,irq,softirq,steal)  |
+| `host.mem.capacity_kb`           | value | KB      | `type` (total,used,free,available)                              |
+| `host.swap.capacity_kb`          | value | KB      | `type` (total,used,free)                                        |
+| `host.fs.capacity_kb`            | value | KB      | `mount`, `device`, `type` (total,used,free)                     |
+| `host.fs.inodes_count`           | value | count   | `mount`, `device`, `type` (total,used,free)                     |
+| `host.disk.io_kb`                | count | kb      | `device`, `dir` (read,write)                                    |
+| `host.disk.io_ops`               | count | ops     | `device`, `dir` (read,write)                                    |
+| `host.disk.io_time_ms`           | count | ms      | `device`                                                        |
+| `host.net.kb`                    | count | kb      | `iface`, `dir` (rx,tx)                                          |
+| `host.net.packets`               | count | packets | `iface`, `dir` (rx,tx)                                          |
+| `host.net.errors`                | count | errors  | `iface`, `dir` (rx,tx)                                          |
+| `host.net.dropped`               | count | packets | `iface`, `dir` (rx,tx)                                          |
+| `docker.container.cpu.usage_pct` | value | percent | `service`                                                       |
+| `docker.container.mem.usage_kb`  | value | kb      | `service`                                                       |
+| `docker.container.net.kb`        | count | kb      | `service`, `dir` (rx,tx)                                        |
+| `docker.container.restart_count` | count | count   | `service`                                                       |
+| `mongo.connections`              | value | count   | `instance`, `type` (current,available)                          |
+| `mongo.mem.resident_mb`          | value | mb      | `instance`                                                      |
+| `mongo.wt.cache.kb`              | value | kb      | `instance`, `type` (used,max)                                   |
+| `mongo.wt.cache.evictions_count` | count | count   | `instance`                                                      |
 | `mongo.ops_count`                | count | ops     | `instance`, `type` (insert,query,update,delete,getmore,command) |
 | `mongo.op_latency_ms`            | value | ms      | `instance`, `type` (reads,writes,commands)                      |
 
@@ -53,7 +55,9 @@ Config file (optional):
 - Override path via `--config` / `-c` or `STATOK_CONFIG`.
 - When running as root, the system path is checked before the user path; otherwise user path is preferred.
 - `${VAR}` expansion is supported for all string fields.
-- `env_files` can provide `${VAR}` values from simple `KEY=VALUE` files (later files override earlier ones; process env is used as a fallback). Missing files are ignored. Optional `export ` prefix is supported. Values may be wrapped in single or double quotes (quotes are stripped).
+- `env_files` can provide `${VAR}` values from simple `KEY=VALUE` files (later files override earlier ones; process env
+  is used as a fallback). Missing files are ignored. Optional `export ` prefix is supported. Values may be wrapped in
+  single or double quotes (quotes are stripped).
 - Config values override flags for overlapping fields (e.g., `agent.workload`); an empty workload is an error.
 
 Example:
@@ -71,4 +75,5 @@ integrations:
       - uri: "mongodb://monitor:${MONGO_PASSWORD}@localhost:27017/admin"
 ```
 
-Mongo note: `serverStatus` runs against the `admin` database and requires appropriate permissions for the configured user.
+Mongo note: `serverStatus` runs against the `admin` database and requires appropriate permissions for the configured
+user.

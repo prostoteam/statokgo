@@ -25,8 +25,10 @@ type CPUCollector struct {
 	timeout       time.Duration
 	every         time.Duration
 
-	mu   sync.Mutex
-	prev map[string]dockerCPUPrev
+	mu          sync.Mutex
+	prev        map[string]dockerCPUPrev
+	restartPrev map[string]uint64
+	netPrev     map[string]dockerNetPrev
 }
 
 func (c *CPUCollector) ID() string { return "docker.cpu" }
@@ -45,6 +47,12 @@ func (c *CPUCollector) Collect(parent context.Context) error {
 		c.mu.Lock()
 		for k := range c.prev {
 			delete(c.prev, k)
+		}
+		for k := range c.restartPrev {
+			delete(c.restartPrev, k)
+		}
+		for k := range c.netPrev {
+			delete(c.netPrev, k)
 		}
 		c.mu.Unlock()
 		return nil
@@ -90,6 +98,16 @@ sendLoop:
 			delete(c.prev, id)
 		}
 	}
+	for id := range c.restartPrev {
+		if _, ok := active[id]; !ok {
+			delete(c.restartPrev, id)
+		}
+	}
+	for id := range c.netPrev {
+		if _, ok := active[id]; !ok {
+			delete(c.netPrev, id)
+		}
+	}
 	c.mu.Unlock()
 
 	return nil
@@ -130,6 +148,8 @@ func newCPUCollector(sockPath string, every time.Duration, labelMode string, max
 		timeout:       timeout,
 		every:         every,
 		prev:          make(map[string]dockerCPUPrev),
+		restartPrev:   make(map[string]uint64),
+		netPrev:       make(map[string]dockerNetPrev),
 	}, nil
 }
 
@@ -169,10 +189,56 @@ func (c *CPUCollector) collectContainer(ctx context.Context, ctr dockerContainer
 		return
 	}
 
+	restartCount, hasRestart := c.getRestartCount(ctx, ctr.ID)
+
 	if usage := stats.MemoryStats.Usage; usage > 0 {
 		statok.Value("docker.container.mem.usage_kb", float64(usage)/1024.0,
 			targetLabel,
 		)
+	}
+
+	if hasRestart {
+		c.mu.Lock()
+		prevRestart, ok := c.restartPrev[ctr.ID]
+		c.restartPrev[ctr.ID] = restartCount
+		c.mu.Unlock()
+		if ok {
+			delta := diffUint(prevRestart, restartCount)
+			if delta > 0 {
+				statok.Count("docker.container.restart_count", float64(delta),
+					targetLabel,
+				)
+			}
+		}
+	}
+
+	if len(stats.Networks) > 0 {
+		var rxBytes uint64
+		var txBytes uint64
+		for _, net := range stats.Networks {
+			rxBytes += net.RxBytes
+			txBytes += net.TxBytes
+		}
+		c.mu.Lock()
+		prevNet, ok := c.netPrev[ctr.ID]
+		c.netPrev[ctr.ID] = dockerNetPrev{rxBytes: rxBytes, txBytes: txBytes}
+		c.mu.Unlock()
+		if ok {
+			rxDelta := diffUint(prevNet.rxBytes, rxBytes)
+			if rxDelta > 0 {
+				statok.Count("docker.container.net.kb", float64(rxDelta)/1024.0,
+					targetLabel,
+					"dir=rx",
+				)
+			}
+			txDelta := diffUint(prevNet.txBytes, txBytes)
+			if txDelta > 0 {
+				statok.Count("docker.container.net.kb", float64(txDelta)/1024.0,
+					targetLabel,
+					"dir=tx",
+				)
+			}
+		}
 	}
 
 	total := stats.CPUStats.CPUUsage.TotalUsage
@@ -240,6 +306,18 @@ func (c *CPUCollector) getStats(ctx context.Context, containerID string) (*docke
 		return nil, err
 	}
 	return &out, nil
+}
+
+func (c *CPUCollector) getRestartCount(ctx context.Context, containerID string) (uint64, bool) {
+	p := fmt.Sprintf("/containers/%s/json?size=0", url.PathEscape(containerID))
+	var out dockerContainerInfo
+	if err := c.doJSON(ctx, http.MethodGet, p, &out); err != nil {
+		return 0, false
+	}
+	if out.RestartCount > 0 {
+		return out.RestartCount, true
+	}
+	return out.State.RestartCount, true
 }
 
 func (c *CPUCollector) doJSON(ctx context.Context, method, path string, dst any) error {
