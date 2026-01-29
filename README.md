@@ -40,6 +40,7 @@ func main() {
 	// Non-blocking calls; dropped silently if the queue is full.
 	statok.Count("requests", 1, "service=api", statok.Label("method", "GET"))
 	statok.Value("latency_ms", 123.4, "service=api", "endpoint=/login")
+	statok.ValueSparse("host.fs.capacity_kb", 1024*1024, "mount=/")
 
 	// Flush remaining events before exiting.
 	_ = statok.Default().Close(context.Background())

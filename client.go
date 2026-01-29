@@ -17,6 +17,11 @@ var (
 	ErrInvalidWorkload = errors.New("statok: invalid workload")
 )
 
+const (
+	metaLabelFillMode = "__statok_fill"
+	metaFillModeCarry = "carry"
+)
+
 // Client implements the non-blocking Statok metrics API.
 type Client struct {
 	cfg           Config
@@ -104,6 +109,13 @@ func Value(metric string, value float64, labels ...string) {
 	}
 }
 
+// ValueSparse records a value sample that should be treated as sparse gauge data.
+func ValueSparse(metric string, value float64, labels ...string) {
+	if c := Default(); c != nil {
+		c.ValueSparse(metric, value, labels...)
+	}
+}
+
 // Client methods --------------------------------------------------------------
 
 // Count records a counter delta. Calls never block; on overflow the event is dropped.
@@ -114,6 +126,17 @@ func (c *Client) Count(metric string, delta float64, labels ...string) {
 // Value records a measurement sample.
 func (c *Client) Value(metric string, value float64, labels ...string) {
 	c.enqueue(metricTypeValue, metric, value, labels)
+}
+
+// ValueSparse records a sparse gauge sample (last value should carry forward).
+func (c *Client) ValueSparse(metric string, value float64, labels ...string) {
+	if metric == "" {
+		return
+	}
+	metaLabels := make([]string, 0, len(labels)+2)
+	metaLabels = append(metaLabels, labels...)
+	metaLabels = append(metaLabels, Label(metaLabelFillMode, metaFillModeCarry))
+	c.enqueue(metricTypeValue, metric, value, metaLabels)
 }
 
 func (c *Client) enqueue(typ metricType, metric string, value float64, labels []string) {

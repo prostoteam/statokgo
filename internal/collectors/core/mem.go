@@ -75,7 +75,7 @@ func collectMemProc() error {
 	}
 
 	emitMem := func(typ string, v uint64) {
-		statok.Value("host.mem.capacity_kb", float64(v),
+		statok.ValueSparse("host.mem.capacity_kb", float64(v),
 			statok.Label("type", typ),
 		)
 	}
@@ -85,7 +85,7 @@ func collectMemProc() error {
 	emitMem("available", memAvailable)
 
 	emitSwap := func(typ string, v uint64) {
-		statok.Value("host.swap.capacity_kb", float64(v),
+		statok.ValueSparse("host.swap.capacity_kb", float64(v),
 			statok.Label("type", typ),
 		)
 	}
@@ -116,7 +116,7 @@ func collectMemGopsutil() error {
 	swapUsedKB := sm.Used / 1024
 
 	emitMem := func(typ string, v uint64) {
-		statok.Value("host.mem.capacity_kb", float64(v),
+		statok.ValueSparse("host.mem.capacity_kb", float64(v),
 			statok.Label("type", typ),
 		)
 	}
@@ -126,7 +126,7 @@ func collectMemGopsutil() error {
 	emitMem("available", memAvailKB)
 
 	emitSwap := func(typ string, v uint64) {
-		statok.Value("host.swap.capacity_kb", float64(v),
+		statok.ValueSparse("host.swap.capacity_kb", float64(v),
 			statok.Label("type", typ),
 		)
 	}

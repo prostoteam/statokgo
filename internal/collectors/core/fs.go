@@ -106,14 +106,14 @@ func emitFSStat(device, mount string) {
 	deviceLabel := statok.Label("device", device)
 
 	emitSpace := func(typ string, v uint64) {
-		statok.Value("host.fs.capacity_kb", float64(v),
+		statok.ValueSparse("host.fs.capacity_kb", float64(v),
 			mountLabel,
 			deviceLabel,
 			statok.Label("type", typ),
 		)
 	}
 	emitInodes := func(typ string, v uint64) {
-		statok.Value("host.fs.inodes_count", float64(v),
+		statok.ValueSparse("host.fs.inodes_count", float64(v),
 			mountLabel,
 			deviceLabel,
 			statok.Label("type", typ),
