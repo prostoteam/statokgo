@@ -11,6 +11,8 @@ type metricType uint8
 const (
 	metricTypeCounter metricType = iota + 1
 	metricTypeValue
+	// metricTypeTotal is internal-only and converted to a counter delta before sending.
+	metricTypeTotal
 )
 
 type event struct {

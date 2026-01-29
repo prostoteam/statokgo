@@ -39,6 +39,7 @@ func main() {
 
 	// Non-blocking calls; dropped silently if the queue is full.
 	statok.Count("requests", 1, "service=api", statok.Label("method", "GET"))
+	statok.Total("host.net.kb", 2048, "iface=eth0", "dir=rx")
 	statok.Value("latency_ms", 123.4, "service=api", "endpoint=/login")
 	statok.ValueSparse("host.fs.capacity_kb", 1024*1024, "mount=/")
 
@@ -47,16 +48,19 @@ func main() {
 }
 ```
 
-Use `statok.Count` for counter deltas and `statok.Value` for sampled values. Both accept labels either as `"k=v"`
-strings or via `statok.Label(k, v)` which sanitizes `=` and control characters.
+Use `statok.Count` for counter deltas, `statok.Total` for monotonic counter totals (first sample is baseline), and
+`statok.Value` for sampled values. All accept labels either as `"k=v"` strings or via `statok.Label(k, v)` which
+sanitizes `=` and control characters.
 
 If you call `statok.Init("my-service", statok.Config{})`, the client defaults to the public ingest host
 `https://statok.dev0101.xyz/api/i/batch`.
 
 ## Core behaviors
 
-- **Non-blocking hot path**: Count/Value never block or panic. When the bounded queue is full, the event is dropped.
-- **Bounded resources**: Queue size, batch size, and max aggregated series per batch are configurable and enforced.
+- **Non-blocking hot path**: Count/Total/Value never block or panic. When the bounded queue is full, the event is
+  dropped.
+- **Bounded resources**: Queue size, batch size, max aggregated series per batch, and total-series cache are
+  configurable.
 - **Background flushing**: A worker goroutine batches events and flushes on size (`MaxBatchSize`) or time (
   `FlushInterval`). Network I/O never runs in the caller goroutine.
 - **Safe labels**: Label slices are copied so caller mutations cannot affect in-flight batches.
@@ -77,6 +81,7 @@ Workload is supplied separately to `Init`/`NewClient` and becomes the required `
 | `QueueSize`             | 64_000                                   | Bounded channel depth; excess events are dropped.                                                                                |
 | `MaxBatchSize`          | 512                                      | Flush when this many events are collected. Also capped by `QueueSize`.                                                           |
 | `MaxSeriesPerBatch`     | 2_048                                    | Limits distinct series retained in aggregation maps per batch. Beyond this, events are forwarded without further aggregation.    |
+| `MaxTotalSeries`        | 2_048                                    | Caps the number of distinct series tracked for `Total` baselines; new series are dropped when the cap is reached.                |
 | `FlushInterval`         | 500ms                                    | Periodic flush cadence.                                                                                                          |
 | `FlushTimeout`          | 5s                                       | Context timeout applied to each transport send.                                                                                  |
 | `LocalAggCounters`      | false                                    | When true, sums counter events with identical metric+labels within the batch.                                                    |
@@ -92,9 +97,15 @@ Workload is supplied separately to `Init`/`NewClient` and becomes the required `
 
 Counters can be aggregated independently via `LocalAggCounters` (sum within the batch, keeping the latest timestamp).
 
+## Agent core metrics
+
+Core collectors emit host-level metrics such as `host.uptime_min`, `host.mem.capacity_kb`, `host.net.kb`,
+`host.disk.io_ops`, and `host.cpu.usage_pct`. The exact set depends on OS support and enabled collectors.
+
 ## Lifecycle
 
-- Create a client with `statok.NewClient(workload, cfg)` or set the package-level default with `statok.Init(workload, cfg)` and then call
+- Create a client with `statok.NewClient(workload, cfg)` or set the package-level default with
+  `statok.Init(workload, cfg)` and then call
   `statok.Count/Value` helpers.
 - Call `client.Close(ctx)` during shutdown to flush the queue. Close drains without blocking the caller goroutine; it
   honors the provided context for the final send.
@@ -105,7 +116,8 @@ Counters can be aggregated independently via `LocalAggCounters` (sum within the 
 
 - Labels may be provided as `"k=v"` strings or built with `statok.Label(k, v)`, which replaces `=`, `|`, and newlines
   with `_` to keep the line protocol well-formed.
-- The `workload` label is injected automatically from the workload argument passed to `Init`/`NewClient` as the first label on every metric; do not pass your own `workload=...`
+- The `workload` label is injected automatically from the workload argument passed to `Init`/`NewClient` as the first
+  label on every metric; do not pass your own `workload=...`
   label (events are dropped if you do).
 - Avoid unbounded label cardinality; prefer coarse keys such as `service`, `host`, `region`, `status`.
 
@@ -115,4 +127,5 @@ Counters can be aggregated independently via `LocalAggCounters` (sum within the 
   the event is dropped immediately.
 - Aggregation maps are bounded by `MaxSeriesPerBatch`; exceeding the cap falls back to per-event forwarding instead of
   growing unbounded memory.
+- `Total` baselines are stored up to `MaxTotalSeries`; additional series are dropped silently.
 - Network errors never surface to callers; they are logged and the worker continues with the next flush window.

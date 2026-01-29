@@ -25,10 +25,8 @@ type CPUCollector struct {
 	timeout       time.Duration
 	every         time.Duration
 
-	mu          sync.Mutex
-	prev        map[string]dockerCPUPrev
-	restartPrev map[string]uint64
-	netPrev     map[string]dockerNetPrev
+	mu   sync.Mutex
+	prev map[string]dockerCPUPrev
 }
 
 func (c *CPUCollector) ID() string { return "docker.cpu" }
@@ -47,12 +45,6 @@ func (c *CPUCollector) Collect(parent context.Context) error {
 		c.mu.Lock()
 		for k := range c.prev {
 			delete(c.prev, k)
-		}
-		for k := range c.restartPrev {
-			delete(c.restartPrev, k)
-		}
-		for k := range c.netPrev {
-			delete(c.netPrev, k)
 		}
 		c.mu.Unlock()
 		return nil
@@ -98,16 +90,6 @@ sendLoop:
 			delete(c.prev, id)
 		}
 	}
-	for id := range c.restartPrev {
-		if _, ok := active[id]; !ok {
-			delete(c.restartPrev, id)
-		}
-	}
-	for id := range c.netPrev {
-		if _, ok := active[id]; !ok {
-			delete(c.netPrev, id)
-		}
-	}
 	c.mu.Unlock()
 
 	return nil
@@ -148,8 +130,6 @@ func newCPUCollector(sockPath string, every time.Duration, labelMode string, max
 		timeout:       timeout,
 		every:         every,
 		prev:          make(map[string]dockerCPUPrev),
-		restartPrev:   make(map[string]uint64),
-		netPrev:       make(map[string]dockerNetPrev),
 	}, nil
 }
 
@@ -198,18 +178,9 @@ func (c *CPUCollector) collectContainer(ctx context.Context, ctr dockerContainer
 	}
 
 	if hasRestart {
-		c.mu.Lock()
-		prevRestart, ok := c.restartPrev[ctr.ID]
-		c.restartPrev[ctr.ID] = restartCount
-		c.mu.Unlock()
-		if ok {
-			delta := diffUint(prevRestart, restartCount)
-			if delta > 0 {
-				statok.Count("docker.container.restart_count", float64(delta),
-					targetLabel,
-				)
-			}
-		}
+		statok.Total("docker.container.restart_count", float64(restartCount),
+			targetLabel,
+		)
 	}
 
 	if len(stats.Networks) > 0 {
@@ -219,26 +190,14 @@ func (c *CPUCollector) collectContainer(ctx context.Context, ctr dockerContainer
 			rxBytes += net.RxBytes
 			txBytes += net.TxBytes
 		}
-		c.mu.Lock()
-		prevNet, ok := c.netPrev[ctr.ID]
-		c.netPrev[ctr.ID] = dockerNetPrev{rxBytes: rxBytes, txBytes: txBytes}
-		c.mu.Unlock()
-		if ok {
-			rxDelta := diffUint(prevNet.rxBytes, rxBytes)
-			if rxDelta > 0 {
-				statok.Count("docker.container.net.kb", float64(rxDelta)/1024.0,
-					targetLabel,
-					"dir=rx",
-				)
-			}
-			txDelta := diffUint(prevNet.txBytes, txBytes)
-			if txDelta > 0 {
-				statok.Count("docker.container.net.kb", float64(txDelta)/1024.0,
-					targetLabel,
-					"dir=tx",
-				)
-			}
-		}
+		statok.Total("docker.container.net.kb", float64(rxBytes)/1024.0,
+			targetLabel,
+			"dir=rx",
+		)
+		statok.Total("docker.container.net.kb", float64(txBytes)/1024.0,
+			targetLabel,
+			"dir=tx",
+		)
 	}
 
 	total := stats.CPUStats.CPUUsage.TotalUsage

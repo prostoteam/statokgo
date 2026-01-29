@@ -11,6 +11,7 @@ const (
 	defaultQueueSize             = 64 * 1024
 	defaultMaxBatchSize          = 512
 	defaultMaxSeriesPerBatch     = 2048
+	defaultMaxTotalSeries        = defaultMaxSeriesPerBatch
 	defaultFlushInterval         = 500 * time.Millisecond
 	defaultFlushTimeout          = 5 * time.Second
 	defaultEndpointHost          = "statok.dev0101.xyz"
@@ -44,10 +45,12 @@ type Config struct {
 	QueueSize         int
 	MaxBatchSize      int
 	MaxSeriesPerBatch int
-	FlushInterval     time.Duration
-	FlushTimeout      time.Duration
-	LocalAggCounters  bool
-	ValueMode         ValueAggregationMode
+	// MaxTotalSeries caps the number of distinct series tracked for Total deltas.
+	MaxTotalSeries   int
+	FlushInterval    time.Duration
+	FlushTimeout     time.Duration
+	LocalAggCounters bool
+	ValueMode        ValueAggregationMode
 	// ValueAggAutoThreshold controls when ValueAggregationAuto switches a series
 	// from raw forwarding to averaged emission within a flush window.
 	ValueAggAutoThreshold int
@@ -72,6 +75,9 @@ func (c *Config) applyDefaults() error {
 	}
 	if c.MaxSeriesPerBatch <= 0 {
 		c.MaxSeriesPerBatch = defaultMaxSeriesPerBatch
+	}
+	if c.MaxTotalSeries <= 0 {
+		c.MaxTotalSeries = defaultMaxTotalSeries
 	}
 	if c.FlushInterval <= 0 {
 		c.FlushInterval = defaultFlushInterval

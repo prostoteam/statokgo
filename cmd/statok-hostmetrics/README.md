@@ -3,7 +3,7 @@
 Collection cadence:
 
 - Every 10s: CPU, memory, swap, network, disk I/O
-- Every 60s: filesystem usage + inode counts
+- Every 60s: filesystem usage, inode counts, uptime
 
 Metrics emitted by the agent (count metrics are deltas over the collection interval).
 All metrics include the `workload` label as the first label; the table lists additional labels.
@@ -13,6 +13,7 @@ All metrics include the `workload` label as the first label; the table lists add
 | `host.cpu.usage_pct`             | value | percent | `cpu`, `mode` (user,nice,system,idle,iowait,irq,softirq,steal)  |
 | `host.mem.capacity_kb`           | value | KB      | `type` (total,used,free,available)                              |
 | `host.swap.capacity_kb`          | value | KB      | `type` (total,used,free)                                        |
+| `host.uptime_min`                | value | min     |                                                                 |
 | `host.fs.capacity_kb`            | value | KB      | `mount`, `device`, `type` (total,used,free)                     |
 | `host.fs.inodes_count`           | value | count   | `mount`, `device`, `type` (total,used,free)                     |
 | `host.disk.io_kb`                | count | kb      | `device`, `dir` (read,write)                                    |

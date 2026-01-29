@@ -7,7 +7,6 @@ import (
 	"os"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/disk"
@@ -17,14 +16,11 @@ import (
 
 type DiskIOCollector struct {
 	every time.Duration
-	mu    sync.Mutex
-	prev  map[string]diskIOStats
 }
 
 func NewDiskIO(every time.Duration) *DiskIOCollector {
 	return &DiskIOCollector{
 		every: every,
-		prev:  make(map[string]diskIOStats),
 	}
 }
 
@@ -46,52 +42,30 @@ func (c *DiskIOCollector) Collect(_ context.Context) error {
 		return err
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	dirRead := statok.Label("dir", "read")
+	dirWrite := statok.Label("dir", "write")
 	for dev, cur := range snapshot {
-		prev, ok := c.prev[dev]
-		c.prev[dev] = cur
-		if !ok {
-			continue
-		}
-
 		deviceLabel := statok.Label("device", dev)
 
-		readBytes := diffUint(prev.readBytes, cur.readBytes)
-		if readBytes > 0 {
-			statok.Count("host.disk.io_kb", float64(readBytes)/1024.0,
-				deviceLabel, statok.Label("dir", "read"),
-			)
-		}
+		statok.Total("host.disk.io_kb", float64(cur.readBytes)/1024.0,
+			deviceLabel, dirRead,
+		)
 
-		writeBytes := diffUint(prev.writeBytes, cur.writeBytes)
-		if writeBytes > 0 {
-			statok.Count("host.disk.io_kb", float64(writeBytes)/1024.0,
-				deviceLabel, statok.Label("dir", "write"),
-			)
-		}
+		statok.Total("host.disk.io_kb", float64(cur.writeBytes)/1024.0,
+			deviceLabel, dirWrite,
+		)
 
-		readOps := diffUint(prev.readOps, cur.readOps)
-		if readOps > 0 {
-			statok.Count("host.disk.io_ops", float64(readOps),
-				deviceLabel, statok.Label("dir", "read"),
-			)
-		}
+		statok.Total("host.disk.io_ops", float64(cur.readOps),
+			deviceLabel, dirRead,
+		)
 
-		writeOps := diffUint(prev.writeOps, cur.writeOps)
-		if writeOps > 0 {
-			statok.Count("host.disk.io_ops", float64(writeOps),
-				deviceLabel, statok.Label("dir", "write"),
-			)
-		}
+		statok.Total("host.disk.io_ops", float64(cur.writeOps),
+			deviceLabel, dirWrite,
+		)
 
-		ioTimeMs := diffUint(prev.ioTimeMs, cur.ioTimeMs)
-		if ioTimeMs > 0 {
-			statok.Count("host.disk.io_time_ms", float64(ioTimeMs),
-				deviceLabel,
-			)
-		}
+		statok.Total("host.disk.io_time_ms", float64(cur.ioTimeMs),
+			deviceLabel,
+		)
 	}
 
 	return nil

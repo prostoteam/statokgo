@@ -12,6 +12,7 @@ func CoreCollectors() []agent.Collector {
 		core.NewNet(agent.CoreFastEvery),
 		core.NewDiskIO(agent.CoreFastEvery),
 		core.NewCPUUsage(agent.CoreFastEvery),
+		core.NewUptime(agent.CoreSlowEvery),
 		core.NewFS(agent.CoreSlowEvery),
 	}
 }

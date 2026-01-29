@@ -22,14 +22,10 @@ type Instance struct {
 
 type instanceState struct {
 	Instance
-	client       *mongo.Client
-	nextAttempt  time.Time
-	prevOps      opCounters
-	hasPrevOps   bool
-	prevOpLat    opLatencies
-	hasPrevLat   bool
-	prevEvict    int64
-	hasPrevEvict bool
+	client      *mongo.Client
+	nextAttempt time.Time
+	prevOpLat   opLatencies
+	hasPrevLat  bool
 }
 
 type Collector struct {
@@ -175,34 +171,25 @@ func (c *Collector) collectInstance(ctx context.Context, inst *instanceState) er
 	}
 	emitWTCache("used", status.WiredTiger.Cache.BytesCurrent)
 	emitWTCache("max", status.WiredTiger.Cache.BytesMax)
-	if inst.hasPrevEvict {
-		deltaEvict := diffCounter(inst.prevEvict, status.WiredTiger.Cache.Evictions)
-		if deltaEvict > 0 {
-			statok.Count("mongo.wt.cache.evictions_count", float64(deltaEvict), instanceLabel)
-		}
+	if status.WiredTiger.Cache.Evictions >= 0 {
+		statok.Total("mongo.wt.cache.evictions_count", float64(status.WiredTiger.Cache.Evictions), instanceLabel)
 	}
-	inst.prevEvict = status.WiredTiger.Cache.Evictions
-	inst.hasPrevEvict = true
 
-	if inst.hasPrevOps {
-		emitOp := func(typ string, delta int64) {
-			if delta <= 0 {
-				return
-			}
-			statok.Count("mongo.ops_count", float64(delta),
-				instanceLabel,
-				statok.Label("type", typ),
-			)
+	emitOp := func(typ string, total int64) {
+		if total < 0 {
+			return
 		}
-		emitOp("insert", diffCounter(inst.prevOps.Insert, status.OpCounters.Insert))
-		emitOp("query", diffCounter(inst.prevOps.Query, status.OpCounters.Query))
-		emitOp("update", diffCounter(inst.prevOps.Update, status.OpCounters.Update))
-		emitOp("delete", diffCounter(inst.prevOps.Delete, status.OpCounters.Delete))
-		emitOp("getmore", diffCounter(inst.prevOps.GetMore, status.OpCounters.GetMore))
-		emitOp("command", diffCounter(inst.prevOps.Command, status.OpCounters.Command))
+		statok.Total("mongo.ops_count", float64(total),
+			instanceLabel,
+			statok.Label("type", typ),
+		)
 	}
-	inst.prevOps = status.OpCounters
-	inst.hasPrevOps = true
+	emitOp("insert", status.OpCounters.Insert)
+	emitOp("query", status.OpCounters.Query)
+	emitOp("update", status.OpCounters.Update)
+	emitOp("delete", status.OpCounters.Delete)
+	emitOp("getmore", status.OpCounters.GetMore)
+	emitOp("command", status.OpCounters.Command)
 
 	if inst.hasPrevLat {
 		emitLatency := func(typ string, prev, cur opLatency) {

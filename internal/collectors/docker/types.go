@@ -50,8 +50,3 @@ type dockerNetworkStats struct {
 	RxBytes uint64 `json:"rx_bytes"`
 	TxBytes uint64 `json:"tx_bytes"`
 }
-
-type dockerNetPrev struct {
-	rxBytes uint64
-	txBytes uint64
-}

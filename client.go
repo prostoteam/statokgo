@@ -102,6 +102,13 @@ func Count(metric string, delta float64, labels ...string) {
 	}
 }
 
+// Total records a monotonic counter total using the default client.
+func Total(metric string, total float64, labels ...string) {
+	if c := Default(); c != nil {
+		c.Total(metric, total, labels...)
+	}
+}
+
 // Value records a value sample using the default client.
 func Value(metric string, value float64, labels ...string) {
 	if c := Default(); c != nil {
@@ -121,6 +128,12 @@ func ValueSparse(metric string, value float64, labels ...string) {
 // Count records a counter delta. Calls never block; on overflow the event is dropped.
 func (c *Client) Count(metric string, delta float64, labels ...string) {
 	c.enqueue(metricTypeCounter, metric, delta, labels)
+}
+
+// Total records a monotonic counter total. Calls never block; on overflow the event is dropped.
+// The first Total sample for a series is used as a baseline and does not emit a counter event.
+func (c *Client) Total(metric string, total float64, labels ...string) {
+	c.enqueue(metricTypeTotal, metric, total, labels)
 }
 
 // Value records a measurement sample.
@@ -212,6 +225,11 @@ func (c *Client) run(ctx context.Context) {
 	ticker := time.NewTicker(c.cfg.FlushInterval)
 	defer ticker.Stop()
 	batch := make([]*event, 0, c.cfg.MaxBatchSize)
+	totalLimit := c.cfg.MaxTotalSeries
+	var totals map[string]float64
+	if totalLimit > 0 {
+		totals = make(map[string]float64, min(totalLimit, c.cfg.MaxBatchSize))
+	}
 	flush := func() {
 		if len(batch) == 0 {
 			return
@@ -231,6 +249,12 @@ func (c *Client) run(ctx context.Context) {
 			if ev == nil {
 				continue
 			}
+			if ev.typ == metricTypeTotal {
+				if !c.applyTotal(ev, totals, totalLimit) {
+					releaseEvent(ev)
+					continue
+				}
+			}
 			batch = append(batch, ev)
 			if len(batch) >= c.cfg.MaxBatchSize {
 				flush()
@@ -241,6 +265,12 @@ func (c *Client) run(ctx context.Context) {
 				select {
 				case ev := <-c.queue:
 					if ev != nil {
+						if ev.typ == metricTypeTotal {
+							if !c.applyTotal(ev, totals, totalLimit) {
+								releaseEvent(ev)
+								continue
+							}
+						}
 						batch = append(batch, ev)
 						if len(batch) >= c.cfg.MaxBatchSize {
 							flush()
@@ -253,6 +283,34 @@ func (c *Client) run(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (c *Client) applyTotal(ev *event, totals map[string]float64, limit int) bool {
+	if ev == nil || limit <= 0 {
+		return false
+	}
+	key := seriesKey(ev.name, ev.labels)
+	prev, ok := totals[key]
+	if !ok {
+		if len(totals) >= limit {
+			return false
+		}
+		totals[key] = ev.value
+		return false
+	}
+	if ev.value < prev {
+		totals[key] = ev.value
+		return false
+	}
+	delta := ev.value - prev
+	if delta <= 0 {
+		totals[key] = ev.value
+		return false
+	}
+	totals[key] = ev.value
+	ev.typ = metricTypeCounter
+	ev.value = delta
+	return true
 }
 
 func (c *Client) flush(events []*event) {
