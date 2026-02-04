@@ -57,15 +57,15 @@ func (c *Collector) Collect(ctx context.Context) error {
 	emitConn("writing", status.Writing)
 	emitConn("waiting", status.Waiting)
 
-	if status.Accepts >= 0 {
-		statok.Total("nginx.accepts", float64(status.Accepts))
+	emitTotal := func(typ string, v int64) {
+		if v < 0 {
+			return
+		}
+		statok.Total("nginx.totals", float64(v), statok.Label("type", typ))
 	}
-	if status.Handled >= 0 {
-		statok.Total("nginx.handled", float64(status.Handled))
-	}
-	if status.Requests >= 0 {
-		statok.Total("nginx.requests", float64(status.Requests))
-	}
+	emitTotal("accepts", status.Accepts)
+	emitTotal("handled", status.Handled)
+	emitTotal("requests", status.Requests)
 
 	return nil
 }

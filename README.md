@@ -107,7 +107,7 @@ Core collectors emit host-level metrics such as `host.uptime_min`, `host.mem.cap
 Hostmetrics integrations can add system-adjacent metrics when enabled:
 
 - Docker: `docker.container.*` metrics auto-enabled when `/var/run/docker.sock` is detected.
-- Nginx: `nginx.connections`, `nginx.requests`, `nginx.accepts`, `nginx.handled` via `stub_status` (enabled unless
+- Nginx: `nginx.connections` and `nginx.totals` (type=accepts|handled|requests) via `stub_status` (enabled unless
   explicitly disabled; when no endpoint is set, probes `http://127.0.0.1:{80,8080,8081,8888}{/stub_status,/nginx_status}`
   and uses the first reachable endpoint).
 - MongoDB: `mongo.*` metrics via `serverStatus` (enabled when instances are configured; `enabled` is optional).
