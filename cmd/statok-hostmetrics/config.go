@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/prostoteam/statokgo/internal/collectors/mongo"
+	"github.com/prostoteam/statokgo/internal/collectors/nginx"
 	"github.com/prostoteam/statokgo/internal/integrations"
 )
 
@@ -33,6 +34,7 @@ type agentConfig struct {
 
 type integrationsConfig struct {
 	Mongo mongoConfig `yaml:"mongo"`
+	Nginx nginxConfig `yaml:"nginx"`
 }
 
 type mongoConfig struct {
@@ -44,10 +46,17 @@ type mongoInstanceConfig struct {
 	URI string `yaml:"uri"`
 }
 
+type nginxConfig struct {
+	Enabled  bool   `yaml:"enabled"`
+	Endpoint string `yaml:"endpoint"`
+}
+
 type runtimeConfig struct {
 	Workload       string
 	MongoEnabled   bool
 	MongoInstances []mongo.Instance
+	NginxEnabled   bool
+	NginxEndpoint  string
 }
 
 type configSource struct {
@@ -156,29 +165,39 @@ func resolveRuntimeConfig(cfg *fileConfig, workloadFlag string, workloadFlagSet 
 		return runtimeConfig{}, err
 	}
 	out := runtimeConfig{Workload: workload}
-	if cfg == nil || !cfg.Integrations.Mongo.Enabled {
+	if cfg == nil {
 		return out, nil
 	}
-	if len(cfg.Integrations.Mongo.Instances) == 0 {
-		return runtimeConfig{}, errors.New("mongo integration enabled but no instances configured")
-	}
-	instances := make([]mongo.Instance, 0, len(cfg.Integrations.Mongo.Instances))
-	for i, inst := range cfg.Integrations.Mongo.Instances {
-		uri := strings.TrimSpace(inst.URI)
-		if uri == "" {
-			return runtimeConfig{}, fmt.Errorf("mongo.instances[%d].uri is empty", i)
+	if cfg.Integrations.Mongo.Enabled {
+		if len(cfg.Integrations.Mongo.Instances) == 0 {
+			return runtimeConfig{}, errors.New("mongo integration enabled but no instances configured")
 		}
-		label, err := integrations.InstanceLabelFromURI(uri)
-		if err != nil {
-			return runtimeConfig{}, fmt.Errorf("mongo.instances[%d]: %w", i, err)
+		instances := make([]mongo.Instance, 0, len(cfg.Integrations.Mongo.Instances))
+		for i, inst := range cfg.Integrations.Mongo.Instances {
+			uri := strings.TrimSpace(inst.URI)
+			if uri == "" {
+				return runtimeConfig{}, fmt.Errorf("mongo.instances[%d].uri is empty", i)
+			}
+			label, err := integrations.InstanceLabelFromURI(uri)
+			if err != nil {
+				return runtimeConfig{}, fmt.Errorf("mongo.instances[%d]: %w", i, err)
+			}
+			instances = append(instances, mongo.Instance{
+				URI:   uri,
+				Label: label,
+			})
 		}
-		instances = append(instances, mongo.Instance{
-			URI:   uri,
-			Label: label,
-		})
+		out.MongoEnabled = true
+		out.MongoInstances = instances
 	}
-	out.MongoEnabled = true
-	out.MongoInstances = instances
+	if cfg.Integrations.Nginx.Enabled {
+		endpoint := nginx.NormalizeEndpoint(cfg.Integrations.Nginx.Endpoint)
+		if err := nginx.ValidateEndpoint(endpoint); err != nil {
+			return runtimeConfig{}, fmt.Errorf("nginx endpoint: %w", err)
+		}
+		out.NginxEnabled = true
+		out.NginxEndpoint = endpoint
+	}
 	return out, nil
 }
 

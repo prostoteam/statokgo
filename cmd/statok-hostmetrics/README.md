@@ -8,34 +8,41 @@ Collection cadence:
 Metrics emitted by the agent (count metrics are deltas over the collection interval).
 All metrics include the `workload` label as the first label; the table lists additional labels.
 
-| Metric                           | Kind  | Unit    | Labels                                                          |
-|----------------------------------|-------|---------|-----------------------------------------------------------------|
-| `host.cpu.usage_pct`             | value | percent | `cpu`, `mode` (user,nice,system,idle,iowait,irq,softirq,steal)  |
-| `host.mem.capacity_kb`           | value | KB      | `type` (total,used,free,available)                              |
-| `host.swap.capacity_kb`          | value | KB      | `type` (total,used,free)                                        |
-| `host.uptime_min`                | value | min     |                                                                 |
-| `host.fs.capacity_kb`            | value | KB      | `mount`, `device`, `type` (total,used,free)                     |
-| `host.fs.inodes_count`           | value | count   | `mount`, `device`, `type` (total,used,free)                     |
-| `host.disk.io_kb`                | count | kb      | `device`, `dir` (read,write)                                    |
-| `host.disk.io_ops`               | count | ops     | `device`, `dir` (read,write)                                    |
-| `host.disk.io_time_ms`           | count | ms      | `device`                                                        |
-| `host.net.kb`                    | count | kb      | `iface`, `dir` (rx,tx)                                          |
-| `host.net.packets`               | count | packets | `iface`, `dir` (rx,tx)                                          |
-| `host.net.errors`                | count | errors  | `iface`, `dir` (rx,tx)                                          |
-| `host.net.dropped`               | count | packets | `iface`, `dir` (rx,tx)                                          |
-| `docker.container.cpu.usage_pct` | value | percent | `service`                                                       |
-| `docker.container.mem.usage_kb`  | value | kb      | `service`                                                       |
-| `docker.container.net.kb`        | count | kb      | `service`, `dir` (rx,tx)                                        |
-| `docker.container.restart_count` | count | count   | `service`                                                       |
-| `mongo.connections`              | value | count   | `instance`, `type` (current,available)                          |
-| `mongo.mem.resident_mb`          | value | mb      | `instance`                                                      |
-| `mongo.wt.cache.kb`              | value | kb      | `instance`, `type` (used,max)                                   |
-| `mongo.wt.cache.evictions_count` | count | count   | `instance`                                                      |
-| `mongo.ops_count`                | count | ops     | `instance`, `type` (insert,query,update,delete,getmore,command) |
-| `mongo.op_latency_ms`            | value | ms      | `instance`, `type` (reads,writes,commands)                      |
+| Metric                           | Kind  | Unit     | Labels                                                          |
+|----------------------------------|-------|----------|-----------------------------------------------------------------|
+| `host.cpu.usage_pct`             | value | percent  | `cpu`, `mode` (user,nice,system,idle,iowait,irq,softirq,steal)  |
+| `host.mem.capacity_kb`           | value | KB       | `type` (total,used,free,available)                              |
+| `host.swap.capacity_kb`          | value | KB       | `type` (total,used,free)                                        |
+| `host.uptime_min`                | value | min      |                                                                 |
+| `host.fs.capacity_kb`            | value | KB       | `mount`, `device`, `type` (total,used,free)                     |
+| `host.fs.inodes_count`           | value | count    | `mount`, `device`, `type` (total,used,free)                     |
+| `host.disk.io_kb`                | count | kb       | `device`, `dir` (read,write)                                    |
+| `host.disk.io_ops`               | count | ops      | `device`, `dir` (read,write)                                    |
+| `host.disk.io_time_ms`           | count | ms       | `device`                                                        |
+| `host.net.kb`                    | count | kb       | `iface`, `dir` (rx,tx)                                          |
+| `host.net.packets`               | count | packets  | `iface`, `dir` (rx,tx)                                          |
+| `host.net.errors`                | count | errors   | `iface`, `dir` (rx,tx)                                          |
+| `host.net.dropped`               | count | packets  | `iface`, `dir` (rx,tx)                                          |
+| `docker.container.cpu.usage_pct` | value | percent  | `service`                                                       |
+| `docker.container.mem.usage_kb`  | value | kb       | `service`                                                       |
+| `docker.container.net.kb`        | count | kb       | `service`, `dir` (rx,tx)                                        |
+| `docker.container.restart_count` | count | count    | `service`                                                       |
+| `nginx.connections`              | value | count    | `state` (active,reading,writing,waiting)                        |
+| `nginx.requests`                 | count | requests |                                                                 |
+| `nginx.accepts`                  | count | count    |                                                                 |
+| `nginx.handled`                  | count | count    |                                                                 |
+| `mongo.connections`              | value | count    | `instance`, `type` (current,available)                          |
+| `mongo.mem.resident_mb`          | value | mb       | `instance`                                                      |
+| `mongo.wt.cache.kb`              | value | kb       | `instance`, `type` (used,max)                                   |
+| `mongo.wt.cache.evictions_count` | count | count    | `instance`                                                      |
+| `mongo.ops_count`                | count | ops      | `instance`, `type` (insert,query,update,delete,getmore,command) |
+| `mongo.op_latency_ms`            | value | ms       | `instance`, `type` (reads,writes,commands)                      |
 
 Docker metrics are enabled automatically when a local Docker socket is detected at `/var/run/docker.sock`. The label
 mode is currently hardcoded to `service` (compose service / swarm service / fallback container name).
+
+Nginx metrics require a reachable `stub_status` endpoint and are enabled via configuration. The default endpoint is
+`http://127.0.0.1/stub_status` unless overridden.
 
 Agent flags:
 
@@ -70,6 +77,9 @@ env_files:
   - "/etc/statok/agent.env"
 
 integrations:
+  nginx:
+    enabled: true
+    endpoint: "http://127.0.0.1/stub_status"
   mongo:
     enabled: true
     instances:

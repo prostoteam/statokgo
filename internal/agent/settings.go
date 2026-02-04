@@ -11,4 +11,5 @@ const (
 
 	DockerEvery = 10 * time.Second
 	MongoEvery  = 10 * time.Second
+	NginxEvery  = 10 * time.Second
 )

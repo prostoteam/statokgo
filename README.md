@@ -102,6 +102,15 @@ Counters can be aggregated independently via `LocalAggCounters` (sum within the 
 Core collectors emit host-level metrics such as `host.uptime_min`, `host.mem.capacity_kb`, `host.net.kb`,
 `host.disk.io_ops`, and `host.cpu.usage_pct`. The exact set depends on OS support and enabled collectors.
 
+## Agent integrations
+
+Hostmetrics integrations can add system-adjacent metrics when enabled:
+
+- Docker: `docker.container.*` metrics auto-enabled when `/var/run/docker.sock` is detected.
+- Nginx: `nginx.connections`, `nginx.requests`, `nginx.accepts`, `nginx.handled` via `stub_status` (default endpoint
+  `http://127.0.0.1/stub_status`, configurable).
+- MongoDB: `mongo.*` metrics via `serverStatus` (config-driven).
+
 ## Lifecycle
 
 - Create a client with `statok.NewClient(workload, cfg)` or set the package-level default with

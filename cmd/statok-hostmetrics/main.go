@@ -14,6 +14,7 @@ import (
 	"github.com/prostoteam/statokgo/internal/agent"
 	"github.com/prostoteam/statokgo/internal/agent/catalog"
 	"github.com/prostoteam/statokgo/internal/collectors/mongo"
+	"github.com/prostoteam/statokgo/internal/collectors/nginx"
 )
 
 const statokIngestHost = "statok.dev0101.xyz"
@@ -81,6 +82,9 @@ func main() {
 	probes := catalog.IntegrationProbes()
 	if runtimeCfg.MongoEnabled {
 		probes = append(probes, mongo.NewProbe(runtimeCfg.MongoInstances, agent.MongoEvery, mongoRetryInterval))
+	}
+	if runtimeCfg.NginxEnabled {
+		probes = append(probes, nginx.NewProbe(runtimeCfg.NginxEndpoint, agent.NginxEvery))
 	}
 	agent.Run(ctx, core, probes)
 	flushAndClose()
