@@ -172,7 +172,7 @@ func (c *CPUCollector) collectContainer(ctx context.Context, ctr dockerContainer
 	restartCount, hasRestart := c.getRestartCount(ctx, ctr.ID)
 
 	if usage := stats.MemoryStats.Usage; usage > 0 {
-		statok.Value("docker.container.mem.usage_kb", float64(usage)/1024.0,
+		statok.ValueSparse("docker.container.mem.usage_kb", float64(usage)/1024.0,
 			targetLabel,
 		)
 	}
