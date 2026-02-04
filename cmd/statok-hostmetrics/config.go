@@ -167,7 +167,7 @@ func resolveRuntimeConfig(cfg *fileConfig, workloadFlag string, workloadFlagSet 
 	out := runtimeConfig{Workload: workload}
 	if cfg == nil {
 		out.NginxEnabled = true
-		out.NginxEndpoint = nginx.DefaultEndpoint
+		out.NginxEndpoint = ""
 		return out, nil
 	}
 	mongoEnabled := true
@@ -205,13 +205,11 @@ func resolveRuntimeConfig(cfg *fileConfig, workloadFlag string, workloadFlagSet 
 	}
 	if nginxEnabled {
 		endpoint := cfg.Integrations.Nginx.Endpoint
-		if strings.TrimSpace(endpoint) == "" {
-			endpoint = nginx.DefaultEndpoint
-		} else {
+		if strings.TrimSpace(endpoint) != "" {
 			endpoint = nginx.NormalizeEndpoint(endpoint)
-		}
-		if err := nginx.ValidateEndpoint(endpoint); err != nil {
-			return runtimeConfig{}, fmt.Errorf("nginx endpoint: %w", err)
+			if err := nginx.ValidateEndpoint(endpoint); err != nil {
+				return runtimeConfig{}, fmt.Errorf("nginx endpoint: %w", err)
+			}
 		}
 		out.NginxEnabled = true
 		out.NginxEndpoint = endpoint

@@ -41,8 +41,9 @@ All metrics include the `workload` label as the first label; the table lists add
 Docker metrics are enabled automatically when a local Docker socket is detected at `/var/run/docker.sock`. The label
 mode is currently hardcoded to `service` (compose service / swarm service / fallback container name).
 
-Nginx metrics require a reachable `stub_status` endpoint and are enabled by default unless explicitly disabled. The
-default endpoint is `http://127.0.0.1/stub_status` unless overridden.
+Nginx metrics require a reachable `stub_status` endpoint and are enabled by default unless explicitly disabled. When
+no endpoint is configured, the agent auto-probes `http://127.0.0.1:{80,8080,8081,8888}{/stub_status,/nginx_status}` and
+uses the first reachable match.
 
 Mongo integration is enabled when instances are configured; the `enabled` flag is optional. Set `enabled: false` to
 disable it even when instances are present.
