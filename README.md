@@ -108,8 +108,8 @@ Hostmetrics integrations can add system-adjacent metrics when enabled:
 
 - Docker: `docker.container.*` metrics auto-enabled when `/var/run/docker.sock` is detected.
 - Nginx: `nginx.connections`, `nginx.requests`, `nginx.accepts`, `nginx.handled` via `stub_status` (default endpoint
-  `http://127.0.0.1/stub_status`, configurable).
-- MongoDB: `mongo.*` metrics via `serverStatus` (config-driven).
+  `http://127.0.0.1/stub_status`, configurable, enabled unless explicitly disabled).
+- MongoDB: `mongo.*` metrics via `serverStatus` (enabled when instances are configured; `enabled` is optional).
 
 ## Lifecycle
 

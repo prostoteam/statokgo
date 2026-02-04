@@ -38,7 +38,7 @@ type integrationsConfig struct {
 }
 
 type mongoConfig struct {
-	Enabled   bool                  `yaml:"enabled"`
+	Enabled   *bool                 `yaml:"enabled"`
 	Instances []mongoInstanceConfig `yaml:"instances"`
 }
 
@@ -47,7 +47,7 @@ type mongoInstanceConfig struct {
 }
 
 type nginxConfig struct {
-	Enabled  bool   `yaml:"enabled"`
+	Enabled  *bool  `yaml:"enabled"`
 	Endpoint string `yaml:"endpoint"`
 }
 
@@ -166,12 +166,21 @@ func resolveRuntimeConfig(cfg *fileConfig, workloadFlag string, workloadFlagSet 
 	}
 	out := runtimeConfig{Workload: workload}
 	if cfg == nil {
+		out.NginxEnabled = true
+		out.NginxEndpoint = nginx.DefaultEndpoint
 		return out, nil
 	}
-	if cfg.Integrations.Mongo.Enabled {
-		if len(cfg.Integrations.Mongo.Instances) == 0 {
+	mongoEnabled := true
+	if cfg.Integrations.Mongo.Enabled != nil && !*cfg.Integrations.Mongo.Enabled {
+		mongoEnabled = false
+	}
+	if mongoEnabled && len(cfg.Integrations.Mongo.Instances) == 0 {
+		if cfg.Integrations.Mongo.Enabled != nil && *cfg.Integrations.Mongo.Enabled {
 			return runtimeConfig{}, errors.New("mongo integration enabled but no instances configured")
 		}
+		mongoEnabled = false
+	}
+	if mongoEnabled {
 		instances := make([]mongo.Instance, 0, len(cfg.Integrations.Mongo.Instances))
 		for i, inst := range cfg.Integrations.Mongo.Instances {
 			uri := strings.TrimSpace(inst.URI)
@@ -190,8 +199,17 @@ func resolveRuntimeConfig(cfg *fileConfig, workloadFlag string, workloadFlagSet 
 		out.MongoEnabled = true
 		out.MongoInstances = instances
 	}
-	if cfg.Integrations.Nginx.Enabled {
-		endpoint := nginx.NormalizeEndpoint(cfg.Integrations.Nginx.Endpoint)
+	nginxEnabled := true
+	if cfg.Integrations.Nginx.Enabled != nil && !*cfg.Integrations.Nginx.Enabled {
+		nginxEnabled = false
+	}
+	if nginxEnabled {
+		endpoint := cfg.Integrations.Nginx.Endpoint
+		if strings.TrimSpace(endpoint) == "" {
+			endpoint = nginx.DefaultEndpoint
+		} else {
+			endpoint = nginx.NormalizeEndpoint(endpoint)
+		}
 		if err := nginx.ValidateEndpoint(endpoint); err != nil {
 			return runtimeConfig{}, fmt.Errorf("nginx endpoint: %w", err)
 		}
