@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -52,6 +54,7 @@ func main() {
 	}
 
 	endpoint := statok.EndpointFromHost(endpointHost)
+	apiKey := os.Getenv("STATOK_API_KEY")
 
 	configSource, configPaths, err := resolveConfigSource(configPath)
 	if err != nil {
@@ -71,7 +74,7 @@ func main() {
 	} else {
 		log.Printf("statok: no config found, using defaults")
 	}
-	if err := initClient(runtimeCfg.Workload, endpoint, verbose); err != nil {
+	if err := initClient(runtimeCfg.Workload, endpoint, apiKey, verbose); err != nil {
 		log.Fatalf("statok: init failed: %v", err)
 	}
 
@@ -90,9 +93,13 @@ func main() {
 	flushAndClose()
 }
 
-func initClient(workload string, endpoint string, verbose bool) error {
+func initClient(workload string, endpoint string, apiKey string, verbose bool) error {
+	if apiKey == "" {
+		return errors.New("STATOK_API_KEY is required")
+	}
 	_, err := statok.Init(workload, statok.Config{
 		Endpoint:          endpoint,
+		APIKey:            apiKey,
 		QueueSize:         64_000,
 		MaxBatchSize:      2_000,
 		MaxSeriesPerBatch: 5_000,
@@ -101,6 +108,12 @@ func initClient(workload string, endpoint string, verbose bool) error {
 		ValueMode:         statok.ValueAggregationBatch,
 		Verbose:           verbose,
 	})
+	if errors.Is(err, statok.ErrInvalidAPIKey) {
+		return fmt.Errorf("invalid STATOK_API_KEY: %w", err)
+	}
+	if errors.Is(err, statok.ErrMissingAPIKey) {
+		return errors.New("STATOK_API_KEY is required")
+	}
 	return err
 }
 

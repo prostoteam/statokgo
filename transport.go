@@ -48,6 +48,7 @@ type ValueEvent struct {
 // Events are encoded using the dictionary-based line protocol (v2, seconds).
 type HTTPTransport struct {
 	Endpoint string
+	APIKey   string
 	Client   *http.Client
 	Header   http.Header
 	Logger   Logger
@@ -89,6 +90,9 @@ func (t *HTTPTransport) Send(ctx context.Context, payload *Payload) error {
 		for _, v := range vs {
 			req.Header.Add(k, v)
 		}
+	}
+	if t.APIKey != "" {
+		req.Header.Set("Authorization", t.APIKey)
 	}
 	resp, err := client.Do(req)
 	if err != nil {

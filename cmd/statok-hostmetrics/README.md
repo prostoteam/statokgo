@@ -54,6 +54,7 @@ Agent flags:
 
 Environment overrides:
 
+- `STATOK_API_KEY`: required API token for ingest auth.
 - `STATOK_ENDPOINT`: full ingest URL (highest priority).
 - `STATOK_HOST`: host or URL used to build the ingest endpoint.
 - Endpoint env vars are evaluated outside the config and always apply.

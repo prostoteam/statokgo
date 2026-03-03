@@ -12,9 +12,12 @@ import (
 )
 
 var (
-	ErrNoTransport     = errors.New("statok: no transport configured")
-	ErrClientClosed    = errors.New("statok: client closed")
-	ErrInvalidWorkload = errors.New("statok: invalid workload")
+	ErrNoTransport                 = errors.New("statok: no transport configured")
+	ErrClientClosed                = errors.New("statok: client closed")
+	ErrInvalidWorkload             = errors.New("statok: invalid workload")
+	ErrMissingAPIKey               = errors.New("statok: API key is required for HTTP transport")
+	ErrInvalidAPIKey               = errors.New("statok: invalid API key format")
+	ErrAPIKeyAuthorizationConflict = errors.New("statok: API key conflicts with custom Authorization header")
 )
 
 const (

@@ -43,9 +43,14 @@ func main() {
 	if workload == "" {
 		log.Fatal("statok: workload hostname is empty")
 	}
+	apiKey := strings.TrimSpace(os.Getenv("STATOK_API_KEY"))
+	if apiKey == "" {
+		log.Fatal("statok: STATOK_API_KEY is required")
+	}
 
 	_, err = statok.Init(workload, statok.Config{
 		Endpoint:          "http://localhost:8085/api/i/batch",
+		APIKey:            apiKey,
 		QueueSize:         400_000,
 		MaxBatchSize:      1_000_000,
 		MaxSeriesPerBatch: 30_000,

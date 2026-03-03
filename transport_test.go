@@ -134,3 +134,75 @@ func TestHTTPTransportErrorIncludesEndpoint(t *testing.T) {
 		t.Fatalf("error %q does not mention status code", err)
 	}
 }
+
+func TestHTTPTransportSendSetsAuthorizationHeader(t *testing.T) {
+	const apiKey = "123_secret-token"
+	var gotAuthorization string
+	var gotCustomHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuthorization = r.Header.Get("Authorization")
+		gotCustomHeader = r.Header.Get("X-Custom")
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	tr := &HTTPTransport{
+		Endpoint: srv.URL,
+		APIKey:   apiKey,
+		Header: http.Header{
+			"X-Custom": []string{"1"},
+		},
+	}
+	payload := &Payload{
+		Counters: []CounterEvent{{
+			Metric:    "counter_metric_1",
+			Value:     1,
+			Labels:    []string{Label("env", "test")},
+			Timestamp: 1730000000,
+		}},
+	}
+	if err := tr.Send(context.Background(), payload); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if gotAuthorization != apiKey {
+		t.Fatalf("Authorization = %q, want %q", gotAuthorization, apiKey)
+	}
+	if gotCustomHeader != "1" {
+		t.Fatalf("X-Custom = %q, want %q", gotCustomHeader, "1")
+	}
+}
+
+func TestHTTPTransportAuthorizationIntegration(t *testing.T) {
+	const apiKey = "123_secret-token"
+	payload := &Payload{
+		Counters: []CounterEvent{{
+			Metric:    "counter_metric_1",
+			Value:     1,
+			Labels:    []string{Label("env", "test")},
+			Timestamp: 1730000000,
+		}},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" {
+			http.Error(w, "missing authorization", http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	missingAuthTransport := &HTTPTransport{Endpoint: srv.URL}
+	if err := missingAuthTransport.Send(context.Background(), payload); err == nil {
+		t.Fatalf("Send() error = nil, want unauthorized error")
+	} else if !strings.Contains(err.Error(), "401") {
+		t.Fatalf("Send() error = %v, want 401 status", err)
+	}
+
+	withAuthTransport := &HTTPTransport{
+		Endpoint: srv.URL,
+		APIKey:   apiKey,
+	}
+	if err := withAuthTransport.Send(context.Background(), payload); err != nil {
+		t.Fatalf("Send() error = %v, want nil", err)
+	}
+}

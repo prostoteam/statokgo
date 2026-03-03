@@ -9,6 +9,16 @@ Use the installer to set up a systemd service that starts on boot. Default endpo
 curl -fsSL https://raw.githubusercontent.com/prostoteam/statokgo/main/scripts/install_agent.sh | sudo bash -s -- --workload my-workload --verbose
 ```
 
+The installer will prompt for `STATOK_API_KEY` (hidden input) and save it to `/etc/statok/agent.env` with mode `600`.
+The systemd unit reads it via `EnvironmentFile`, so the key is not passed via command-line args.
+
+Non-interactive install is also supported by passing `STATOK_API_KEY` in the environment:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/prostoteam/statokgo/main/scripts/install_agent.sh -o /tmp/install_agent.sh
+sudo STATOK_API_KEY='123_xxx' bash /tmp/install_agent.sh --workload my-workload --verbose
+```
+
 Override defaults with env vars if needed:
 
 ```bash
@@ -36,6 +46,7 @@ Defaults:
 - Service name: `statok-agent` (`SERVICE_NAME`)
 - Install dir: `/usr/local/bin` (`INSTALL_DIR`)
 - Go flags: `-buildvcs=false` (`GOFLAGS`)
+- API key env file: `/etc/statok/agent.env` for system scope, `~/.config/statok/agent.env` for user scope (`AGENT_ENV_FILE` / `--api-key-file`)
 
 Override via env vars if needed:
 

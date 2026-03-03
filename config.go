@@ -1,10 +1,13 @@
 package statok
 
 import (
+	"fmt"
 	"log"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -39,6 +42,7 @@ const (
 // the process is overloaded new events are dropped instead of blocking callers.
 type Config struct {
 	Endpoint          string
+	APIKey            string
 	Transport         Transport
 	Logger            Logger
 	Verbose           bool
@@ -97,11 +101,29 @@ func (c *Config) applyDefaults() error {
 	if c.Transport == nil && c.Endpoint != "" {
 		c.Transport = &HTTPTransport{
 			Endpoint: c.Endpoint,
+			APIKey:   c.APIKey,
 			Logger:   c.Logger,
 		}
 	}
-	if ht, ok := c.Transport.(*HTTPTransport); ok && ht.Logger == nil {
-		ht.Logger = c.Logger
+	if ht, ok := c.Transport.(*HTTPTransport); ok {
+		if ht.Logger == nil {
+			ht.Logger = c.Logger
+		}
+		if c.APIKey != "" && ht.APIKey == "" {
+			ht.APIKey = c.APIKey
+		}
+		transportAPIKey := ht.APIKey
+		if hasAuthorizationHeader(ht.Header) && transportAPIKey != "" {
+			return ErrAPIKeyAuthorizationConflict
+		}
+		if transportAPIKey == "" {
+			return ErrMissingAPIKey
+		}
+		if err := validateAPIKey(transportAPIKey); err != nil {
+			return err
+		}
+		ht.APIKey = transportAPIKey
+		c.APIKey = transportAPIKey
 	}
 	if c.Logger == nil {
 		c.Logger = noopLogger{}
@@ -160,4 +182,49 @@ func ensureIngestPath(endpoint string) string {
 		u.Path = defaultIngestPath
 	}
 	return u.String()
+}
+
+func validateAPIKey(raw string) error {
+	if raw == "" {
+		return ErrMissingAPIKey
+	}
+	lowerRaw := strings.ToLower(raw)
+	if strings.HasPrefix(lowerRaw, "bearer ") || strings.HasPrefix(lowerRaw, "bearer\t") {
+		return fmt.Errorf("%w: token must be raw without Bearer prefix", ErrInvalidAPIKey)
+	}
+	if strings.IndexFunc(raw, unicode.IsSpace) >= 0 {
+		return fmt.Errorf("%w: token must not contain spaces", ErrInvalidAPIKey)
+	}
+	parts := strings.SplitN(raw, "_", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("%w: expected <client_id>_<secret>", ErrInvalidAPIKey)
+	}
+	clientIDPart := parts[0]
+	secretPart := parts[1]
+	if clientIDPart == "" || secretPart == "" {
+		return fmt.Errorf("%w: expected non-empty client id and secret", ErrInvalidAPIKey)
+	}
+	clientID, err := strconv.ParseUint(clientIDPart, 10, 64)
+	if err != nil || clientID == 0 {
+		return fmt.Errorf("%w: client id must be a positive integer", ErrInvalidAPIKey)
+	}
+	return nil
+}
+
+func hasAuthorizationHeader(h map[string][]string) bool {
+	if len(h) == 0 {
+		return false
+	}
+	for k, values := range h {
+		if !strings.EqualFold(k, "Authorization") {
+			continue
+		}
+		for _, v := range values {
+			if strings.TrimSpace(v) != "" {
+				return true
+			}
+		}
+		return false
+	}
+	return false
 }
