@@ -52,6 +52,11 @@ Agent flags:
 - `--config` / `-c`: path to the YAML config file (optional).
 - `--verbose` / `-v`: enable verbose client logging.
 
+Logs:
+
+- Foreground run: start with `--verbose` to see detailed logs in the terminal.
+- For systemd install logs (`journalctl`), see `scripts/README.md`.
+
 Environment overrides:
 
 - `STATOK_API_KEY`: required API token for ingest auth.

@@ -31,11 +31,23 @@ Check status:
 sudo systemctl status statok-agent
 ```
 
+Tail logs:
+
+```bash
+sudo journalctl -u statok-agent -f
+```
+
 User service (no sudo):
 
 ```bash
 SYSTEMD_SCOPE=user ./install_agent.sh --workload my-workload --verbose
 systemctl --user status statok-agent
+```
+
+Tail logs (user service):
+
+```bash
+journalctl --user -u statok-agent -f
 ```
 
 Note: user services start on boot only if lingering is enabled (`loginctl enable-linger $USER`).
@@ -53,6 +65,8 @@ Override via env vars if needed:
 ```bash
 SERVICE_NAME=statok-agent STATOK_HOST_DEFAULT=statok.dev0101.xyz ./install_agent.sh
 ```
+
+If `SERVICE_NAME` is customized, use that name in `systemctl`/`journalctl` commands instead of `statok-agent`.
 
 ## Foreground (debug)
 
