@@ -209,7 +209,7 @@ prompt_api_key_from_tty() {
   local key
   [ -r /dev/tty ] || return 1
   [ -w /dev/tty ] || return 1
-  printf "statok-install: enter STATOK_API_KEY (<client_id>_<secret>): " > /dev/tty
+  printf "statok-install: 👋🏻 Paste here the API key you generated on the /settings page: " > /dev/tty
   IFS= read -r -s key < /dev/tty || return 1
   printf "\n" > /dev/tty
   STATOK_API_KEY="$key"
