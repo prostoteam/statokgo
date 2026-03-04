@@ -160,20 +160,6 @@ ensure_unit_dir() {
   [ -d "$UNIT_DIR" ] || err "unit dir is not a directory: $UNIT_DIR"
 }
 
-read_api_key_from_env_file() {
-  local path="$1" line
-  [ -f "$path" ] || return 1
-  while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
-      STATOK_API_KEY=*)
-        printf '%s' "${line#STATOK_API_KEY=}"
-        return 0
-        ;;
-    esac
-  done < "$path"
-  return 1
-}
-
 is_valid_api_key() {
   local key="$1" lower client_id secret
   [ -n "$key" ] || return 1
@@ -218,19 +204,9 @@ prompt_api_key_from_tty() {
 }
 
 resolve_api_key() {
-  local file_key=""
   if [ -n "$STATOK_API_KEY" ]; then
     validate_api_key_or_fail "$STATOK_API_KEY"
     return 0
-  fi
-
-  if file_key="$(read_api_key_from_env_file "$AGENT_ENV_FILE")"; then
-    if is_valid_api_key "$file_key"; then
-      STATOK_API_KEY="$file_key"
-      echo "statok-install: reusing API key from $AGENT_ENV_FILE"
-      return 0
-    fi
-    echo "statok-install: existing API key in $AGENT_ENV_FILE is invalid; will request a new value."
   fi
 
   if prompt_api_key_from_tty; then
