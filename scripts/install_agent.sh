@@ -201,7 +201,7 @@ is_valid_api_key() {
 validate_api_key_or_fail() {
   local key="$1"
   if ! is_valid_api_key "$key"; then
-    err "invalid STATOK_API_KEY format; expected raw <client_id>_<secret> without Bearer or spaces"
+    err "invalid API key"
   fi
 }
 
