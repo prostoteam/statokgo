@@ -95,6 +95,11 @@ func (r *Runner) runCollector(ctx context.Context, c Collector) {
 		every = CoreFastEvery
 	}
 
+	// Run one collection immediately so slow collectors publish initial points at startup.
+	if ctx.Err() == nil {
+		r.collectOnce(ctx, c)
+	}
+
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 

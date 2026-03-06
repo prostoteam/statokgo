@@ -2,6 +2,7 @@
 
 Collection cadence:
 
+- Startup: all enabled collectors run once immediately when the agent starts.
 - Every 10s: CPU, memory, swap, network, disk I/O
 - Every 60s: filesystem usage, inode counts, uptime
 
