@@ -198,7 +198,6 @@ prompt_api_key_from_tty() {
   printf "statok-install: 👋🏻 Paste here the API key you generated on the /settings page:" > /dev/tty
   IFS= read -r -s key < /dev/tty || return 1
   printf "\n" > /dev/tty
-  printf "statok-install: debug key echo: %s\n" "$key" > /dev/tty
   STATOK_API_KEY="$key"
   return 0
 }
