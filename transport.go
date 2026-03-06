@@ -3,6 +3,7 @@ package statok
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -52,6 +53,49 @@ type HTTPTransport struct {
 	Client   *http.Client
 	Header   http.Header
 	Logger   Logger
+	// StopStatusCodes controls which HTTP statuses are treated as non-retryable.
+	// When matched, Send returns StopIngestError and client worker disables
+	// further transport sends (default: [401]).
+	StopStatusCodes []int
+	// StopResponseCodes controls which API error body `code` values are treated
+	// as non-retryable (default: ["unauthorized"]).
+	StopResponseCodes []string
+}
+
+// StopIngestError marks a transport failure as non-retryable for the active client.
+// The background worker should stop sending further batches after this error.
+type StopIngestError struct {
+	Code int
+	Err  error
+}
+
+func (e *StopIngestError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	if e.Code > 0 {
+		return fmt.Sprintf("statok: stop ingesting after HTTP %d", e.Code)
+	}
+	return "statok: stop ingesting"
+}
+
+func (e *StopIngestError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// StopIngest reports that the error should disable future sends.
+func (e *StopIngestError) StopIngest() bool { return true }
+
+// IsStopIngestError reports whether err is marked as non-retryable.
+func IsStopIngestError(err error) bool {
+	var marker interface{ StopIngest() bool }
+	return errors.As(err, &marker) && marker.StopIngest()
 }
 
 var defaultHTTPClient = &http.Client{
@@ -107,20 +151,29 @@ func (t *HTTPTransport) Send(ctx context.Context, payload *Payload) error {
 		}
 		return nil
 	}
-	detail := readErrorBody(resp.Body)
+	detail, responseCode := readErrorBody(resp.Body)
+	var sendErr error
 	if detail != "" {
-		return fmt.Errorf("POST %s: %s: %s", urlStr, resp.Status, detail)
+		sendErr = fmt.Errorf("POST %s: %s: %s", urlStr, resp.Status, detail)
+	} else {
+		sendErr = fmt.Errorf("POST %s: %s", urlStr, resp.Status)
 	}
-	return fmt.Errorf("POST %s: %s", urlStr, resp.Status)
+	if t.shouldStopOnStatus(resp.StatusCode) || t.shouldStopOnResponseCode(responseCode) {
+		return &StopIngestError{
+			Code: resp.StatusCode,
+			Err:  sendErr,
+		}
+	}
+	return sendErr
 }
 
-func readErrorBody(r io.Reader) string {
+func readErrorBody(r io.Reader) (detail string, responseCode string) {
 	bodyBytes, _ := io.ReadAll(io.LimitReader(r, maxErrorBodyBytes))
 	if len(bodyBytes) == 0 {
-		return ""
+		return "", ""
 	}
 	io.Copy(io.Discard, r) // drain the rest for keep-alive
-	return compactErrorBody(string(bodyBytes))
+	return compactErrorBody(string(bodyBytes)), extractResponseCode(bodyBytes)
 }
 
 func compactErrorBody(raw string) string {
@@ -129,4 +182,47 @@ func compactErrorBody(raw string) string {
 		return ""
 	}
 	return strings.Join(strings.Fields(raw), " ")
+}
+
+func extractResponseCode(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var payload struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(payload.Code))
+}
+
+func (t *HTTPTransport) shouldStopOnStatus(status int) bool {
+	codes := t.StopStatusCodes
+	if len(codes) == 0 {
+		return status == defaultStopStatusCode
+	}
+	for _, code := range codes {
+		if code == status {
+			return true
+		}
+	}
+	return false
+}
+
+func (t *HTTPTransport) shouldStopOnResponseCode(code string) bool {
+	code = strings.ToLower(strings.TrimSpace(code))
+	if code == "" {
+		return false
+	}
+	configured := t.StopResponseCodes
+	if len(configured) == 0 {
+		return code == defaultStopResponseCode
+	}
+	for _, candidate := range configured {
+		if strings.EqualFold(strings.TrimSpace(candidate), code) {
+			return true
+		}
+	}
+	return false
 }

@@ -68,6 +68,9 @@ If `Endpoint` is empty and `Transport` is nil, the client defaults to the public
 - **Safe labels**: Label slices are copied so caller mutations cannot affect in-flight batches.
 - **Errors are isolated**: Transport errors are logged (via `Logger`) but never returned to the caller; the worker keeps
   running.
+- **Non-retryable auth handling**: By default, HTTP `401 Unauthorized` or API error code `unauthorized` disables further
+  ingest attempts in the current client instance. Configure additional stop conditions via `StopStatusCodes` and
+  `StopResponseCodes`.
 
 ## Configuration reference
 
@@ -87,6 +90,8 @@ Workload is supplied separately to `Init`/`NewClient` and becomes the required `
 | `MaxTotalSeries`        | 2_048                                    | Caps the number of distinct series tracked for `Total` baselines; new series are dropped when the cap is reached.                |
 | `FlushInterval`         | 500ms                                    | Periodic flush cadence.                                                                                                          |
 | `FlushTimeout`          | 5s                                       | Context timeout applied to each transport send.                                                                                  |
+| `StopStatusCodes`       | `[401]`                                  | HTTP statuses treated as non-retryable. Matching responses disable further sends in this client process.                        |
+| `StopResponseCodes`     | `["unauthorized"]`                       | API error body `code` values treated as non-retryable. Matching responses disable further sends in this client process.         |
 | `LocalAggCounters`      | false                                    | When true, sums counter events with identical metric+labels within the batch.                                                    |
 | `ValueMode`             | `ValueAggregationNone`                   | Aggregation mode for values (see below).                                                                                         |
 | `ValueAggAutoThreshold` | 4                                        | Used by `ValueAggregationAuto`; number of raw samples to forward before switching to averaging.                                  |
@@ -142,3 +147,6 @@ Hostmetrics integrations can add system-adjacent metrics when enabled:
   growing unbounded memory.
 - `Total` baselines are stored up to `MaxTotalSeries`; additional series are dropped silently.
 - Network errors never surface to callers; they are logged and the worker continues with the next flush window.
+- HTTP stop statuses (`StopStatusCodes`, default `401`) and API response codes (`StopResponseCodes`, default
+  `unauthorized`) are treated as non-retryable; after one such response, the client drops new events until reinitialized
+  with updated config/credentials.

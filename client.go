@@ -32,6 +32,7 @@ type Client struct {
 	cancel        context.CancelFunc
 	done          chan struct{}
 	dropped       atomic.Uint64
+	stopSending   atomic.Bool
 	logger        Logger
 	once          sync.Once
 	workloadLabel string
@@ -160,6 +161,9 @@ func (c *Client) enqueue(typ metricType, metric string, value float64, labels []
 		return
 	}
 	if c.workloadLabel == "" {
+		return
+	}
+	if c.stopSending.Load() {
 		return
 	}
 	if hasWorkloadLabel(labels) {
@@ -317,6 +321,9 @@ func (c *Client) applyTotal(ev *event, totals map[string]float64, limit int) boo
 }
 
 func (c *Client) flush(events []*event) {
+	if c.stopSending.Load() {
+		return
+	}
 	builder := newBatchBuilder(&c.cfg, len(events))
 	for _, ev := range events {
 		builder.add(ev)
@@ -331,7 +338,15 @@ func (c *Client) flush(events []*event) {
 	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.FlushTimeout)
 	defer cancel()
 	if err := c.cfg.Transport.Send(ctx, payload); err != nil {
-		c.logger.Printf("statok: flush failed: %v", err)
+		if IsStopIngestError(err) {
+			if c.stopSending.CompareAndSwap(false, true) && c.logger != nil {
+				c.logger.Printf("statok: ingest disabled after non-retryable transport response: %v", err)
+			}
+			return
+		}
+		if c.logger != nil {
+			c.logger.Printf("statok: flush failed: %v", err)
+		}
 	}
 }
 

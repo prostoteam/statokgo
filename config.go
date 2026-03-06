@@ -19,6 +19,8 @@ const (
 	defaultFlushTimeout          = 5 * time.Second
 	defaultEndpointHost          = "statok.dev0101.xyz"
 	defaultIngestPath            = "/api/i/batch"
+	defaultStopStatusCode        = 401
+	defaultStopResponseCode      = "unauthorized"
 	defaultValueAggAutoThreshold = 4
 	workloadMaxLen               = 100
 )
@@ -50,11 +52,19 @@ type Config struct {
 	MaxBatchSize      int
 	MaxSeriesPerBatch int
 	// MaxTotalSeries caps the number of distinct series tracked for Total deltas.
-	MaxTotalSeries   int
-	FlushInterval    time.Duration
-	FlushTimeout     time.Duration
-	LocalAggCounters bool
-	ValueMode        ValueAggregationMode
+	MaxTotalSeries int
+	FlushInterval  time.Duration
+	FlushTimeout   time.Duration
+	// StopStatusCodes controls which HTTP response statuses are treated as
+	// non-retryable and should disable further ingest attempts in this client.
+	// Applies to HTTPTransport (default: [401]).
+	StopStatusCodes []int
+	// StopResponseCodes controls which API error body `code` values are treated
+	// as non-retryable and should disable further ingest attempts in this client.
+	// Applies to HTTPTransport (default: ["unauthorized"]).
+	StopResponseCodes []string
+	LocalAggCounters  bool
+	ValueMode         ValueAggregationMode
 	// ValueAggAutoThreshold controls when ValueAggregationAuto switches a series
 	// from raw forwarding to averaged emission within a flush window.
 	ValueAggAutoThreshold int
@@ -95,14 +105,18 @@ func (c *Config) applyDefaults() error {
 	if c.Endpoint != "" {
 		c.Endpoint = ensureIngestPath(c.Endpoint)
 	}
+	c.StopStatusCodes = normalizeStopStatusCodes(c.StopStatusCodes)
+	c.StopResponseCodes = normalizeStopResponseCodes(c.StopResponseCodes)
 	if c.Logger == nil {
 		c.Logger = log.Default()
 	}
 	if c.Transport == nil && c.Endpoint != "" {
 		c.Transport = &HTTPTransport{
-			Endpoint: c.Endpoint,
-			APIKey:   c.APIKey,
-			Logger:   c.Logger,
+			Endpoint:          c.Endpoint,
+			APIKey:            c.APIKey,
+			Logger:            c.Logger,
+			StopStatusCodes:   cloneStatusCodes(c.StopStatusCodes),
+			StopResponseCodes: cloneStopResponseCodes(c.StopResponseCodes),
 		}
 	}
 	if ht, ok := c.Transport.(*HTTPTransport); ok {
@@ -124,6 +138,18 @@ func (c *Config) applyDefaults() error {
 		}
 		ht.APIKey = transportAPIKey
 		c.APIKey = transportAPIKey
+		if len(ht.StopStatusCodes) == 0 {
+			ht.StopStatusCodes = cloneStatusCodes(c.StopStatusCodes)
+		} else {
+			ht.StopStatusCodes = normalizeStopStatusCodes(ht.StopStatusCodes)
+			c.StopStatusCodes = cloneStatusCodes(ht.StopStatusCodes)
+		}
+		if len(ht.StopResponseCodes) == 0 {
+			ht.StopResponseCodes = cloneStopResponseCodes(c.StopResponseCodes)
+		} else {
+			ht.StopResponseCodes = normalizeStopResponseCodes(ht.StopResponseCodes)
+			c.StopResponseCodes = cloneStopResponseCodes(ht.StopResponseCodes)
+		}
 	}
 	if c.Logger == nil {
 		c.Logger = noopLogger{}
@@ -227,4 +253,67 @@ func hasAuthorizationHeader(h map[string][]string) bool {
 		return false
 	}
 	return false
+}
+
+func normalizeStopStatusCodes(in []int) []int {
+	if len(in) == 0 {
+		return []int{defaultStopStatusCode}
+	}
+	out := make([]int, 0, len(in))
+	seen := make(map[int]struct{}, len(in))
+	for _, code := range in {
+		if code < 100 || code > 599 {
+			continue
+		}
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		seen[code] = struct{}{}
+		out = append(out, code)
+	}
+	if len(out) == 0 {
+		return []int{defaultStopStatusCode}
+	}
+	return out
+}
+
+func cloneStatusCodes(in []int) []int {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]int, len(in))
+	copy(out, in)
+	return out
+}
+
+func normalizeStopResponseCodes(in []string) []string {
+	if len(in) == 0 {
+		return []string{defaultStopResponseCode}
+	}
+	out := make([]string, 0, len(in))
+	seen := make(map[string]struct{}, len(in))
+	for _, raw := range in {
+		code := strings.ToLower(strings.TrimSpace(raw))
+		if code == "" {
+			continue
+		}
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		seen[code] = struct{}{}
+		out = append(out, code)
+	}
+	if len(out) == 0 {
+		return []string{defaultStopResponseCode}
+	}
+	return out
+}
+
+func cloneStopResponseCodes(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, len(in))
+	copy(out, in)
+	return out
 }

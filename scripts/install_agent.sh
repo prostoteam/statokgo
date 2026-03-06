@@ -214,7 +214,7 @@ resolve_api_key() {
     return 0
   fi
 
-  err "STATOK_API_KEY is required. Run interactively to be prompted, or set STATOK_API_KEY for non-interactive installs."
+  err "API key is required. Run interactively to be prompted, or set STATOK_API_KEY for non-interactive installs."
 }
 
 write_api_key_env_file() {
