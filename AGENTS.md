@@ -15,7 +15,7 @@ The client must prioritize safety, bounded resource usage, and efficient transpo
   - Periodic flush interval
 - Support optional local aggregation:
   - **Counters**: aggregate identical (metric + labels) events within a batch.
-  - **Values**: allow raw events or optional DDSketch-based local aggregation.
+  - **Values**: forward raw events until DDSketch-based local aggregation is implemented.
 
 ### Safety & Performance Requirements
 
@@ -33,9 +33,9 @@ The client must prioritize safety, bounded resource usage, and efficient transpo
 ### Resource Constraints
 
 - Memory usage must be explicitly bounded by:
-  - Configurable queue size.
-  - Maximum batch size.
-  - Maximum number of unique aggregated series per batch.
+  - Internal queue size.
+  - Internal maximum batch size.
+  - Internal maximum number of unique aggregated series per batch.
 - CPU overhead in the hot path must be minimal and constant-time.
 - Label slices passed by users must be copied to avoid external mutation.
 
@@ -48,8 +48,8 @@ The client must prioritize safety, bounded resource usage, and efficient transpo
 ### Extensibility Requirements
 
 - Ability to expand supported transports (HTTP, gRPC, etc.) without changing the public API.
-- Ability to enable or disable local aggregation modes via configuration.
-- Internal behavior (queue size, flush interval, batch size) must be user-configurable at initialization.
+- Keep implementation details such as queue size, flush interval, batch size, and aggregation limits internal.
+- Keep the public `Config` simple; expose only connection, transport, logging, and verbosity settings unless there is a strong product reason.
 
 ### Instruction for CODEX
 - When I send you `cm`, generate a great commit message formatted as `scope[, scope...]: action-verb sentence that states what changed and why, covering overall task context rather than tiny fixes`. Add details, like initial problem (if any), root cause, implementation details.
@@ -58,4 +58,5 @@ The client must prioritize safety, bounded resource usage, and efficient transpo
 - When adding new metrics - dont forget to add it to README.md
 - Max value for ingester is 429496729, so try to fit in this (e.g. use Kb instead of bytes where possible, or ms instead nanosec).
 - Always bump `const VersionString = "..."` in `./version.go`.
+- After pushing any library change, run `RELEASE_CONFIRM=1 scripts/release_tag.sh` to create and push the next semver patch tag and warm the Go module cache.
 - Statok backend service with ingester at `../statok2/server`.
