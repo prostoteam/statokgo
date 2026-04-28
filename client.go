@@ -16,7 +16,7 @@ var (
 	ErrClientClosed                = errors.New("statok: client closed")
 	ErrInvalidWorkload             = errors.New("statok: invalid workload")
 	ErrMissingAPIKey               = errors.New("statok: API key is required for HTTP transport")
-	ErrInvalidAPIKey               = errors.New("statok: invalid API key format")
+	ErrInvalidAPIKey               = errors.New("statok: invalid API key")
 	ErrAPIKeyAuthorizationConflict = errors.New("statok: API key conflicts with custom Authorization header")
 )
 

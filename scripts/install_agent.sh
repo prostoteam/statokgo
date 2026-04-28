@@ -161,26 +161,8 @@ ensure_unit_dir() {
 }
 
 is_valid_api_key() {
-  local key="$1" lower client_id secret
+  local key="$1"
   [ -n "$key" ] || return 1
-  lower="$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')"
-  case "$lower" in
-    bearer\ *|$'bearer\t'*)
-      return 1
-      ;;
-  esac
-  [[ "$key" =~ [[:space:]] ]] && return 1
-  case "$key" in
-    *_*) ;;
-    *)
-      return 1
-      ;;
-  esac
-  client_id="${key%%_*}"
-  secret="${key#*_}"
-  [ -n "$client_id" ] || return 1
-  [ -n "$secret" ] || return 1
-  [[ "$client_id" =~ ^[1-9][0-9]*$ ]] || return 1
   return 0
 }
 

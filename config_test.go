@@ -47,7 +47,7 @@ func TestApplyDefaultsAllowsCustomNonHTTPTransportWithoutAPIKey(t *testing.T) {
 	}
 }
 
-func TestApplyDefaultsValidatesAPIKeyFormat(t *testing.T) {
+func TestApplyDefaultsAllowsOpaqueAPIKey(t *testing.T) {
 	tests := []struct {
 		name   string
 		apiKey string
@@ -65,9 +65,11 @@ func TestApplyDefaultsValidatesAPIKeyFormat(t *testing.T) {
 				Endpoint: "https://collector.example.com/api/i/batch",
 				APIKey:   tt.apiKey,
 			}
-			err := cfg.applyDefaults()
-			if !errors.Is(err, ErrInvalidAPIKey) {
-				t.Fatalf("applyDefaults() error = %v, want %v", err, ErrInvalidAPIKey)
+			if err := cfg.applyDefaults(); err != nil {
+				t.Fatalf("applyDefaults() error = %v, want nil", err)
+			}
+			if cfg.APIKey != tt.apiKey {
+				t.Fatalf("cfg.APIKey = %q, want %q", cfg.APIKey, tt.apiKey)
 			}
 		})
 	}

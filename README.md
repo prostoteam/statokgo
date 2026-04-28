@@ -28,7 +28,7 @@ func main() {
 
 	if _, err := statok.Init(workload, statok.Config{
 		Endpoint: endpoint,  // creates default HTTP transport
-		APIKey:   "123_xxx", // raw token: <client_id>_<secret>, no Bearer prefix
+		APIKey:   "your-statok-generated-api-key",
 	}); err != nil {
 		log.Fatal(err)
 	}
@@ -49,8 +49,9 @@ Use `statok.Count` for counter deltas, `statok.Total` for monotonic counter tota
 sanitizes `=` and control characters.
 
 If `Endpoint` is empty and `Transport` is nil, the client defaults to the public ingest host
-`https://statok.dev0101.xyz/api/i/batch`. For HTTP transport, `APIKey` is required and must be the raw token value
-(`<client_id>_<secret>`) without `Bearer`.
+`https://statok.dev0101.xyz/api/i/batch`. For HTTP transport, `APIKey` is required and should be the
+Statok-generated ingest API key copied exactly as provided. The client sends it as the `Authorization` header value
+without parsing or rewriting it.
 
 ## Core behaviors
 
@@ -74,7 +75,7 @@ Workload is supplied separately to `Init`/`NewClient` and becomes the required `
 | Field       | Default                                  | Purpose                                                                                                                          |
 |-------------|------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------|
 | `Endpoint`  | `https://statok.dev0101.xyz/api/i/batch` | Ingest URL. When set and `Transport` is nil, an `HTTPTransport` is created and `/api/i/batch` is appended if no path is present. |
-| `APIKey`    | `""`                                     | Raw API token for HTTP transport. Required when using `HTTPTransport`; format must be `<client_id>_<secret>` (no `Bearer`).     |
+| `APIKey`    | `""`                                     | Statok-generated ingest API key for HTTP transport. Required when using `HTTPTransport`; sent exactly as provided.              |
 | `Transport` | nil                                      | Any implementation of `Transport` (HTTP is provided). Must be safe for concurrent use.                                           |
 | `Logger`    | `log.Default()`                          | Receives internal errors and send summaries. Provide your own or silence by using a logger that discards output.                 |
 | `Verbose`   | `false`                                  | When true, logs the client version at startup and each flush with per-type counts and metric breakdowns.                         |
