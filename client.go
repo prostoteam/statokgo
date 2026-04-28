@@ -51,13 +51,10 @@ func NewClient(workload string, cfg Config) (*Client, error) {
 	if cfg.Transport == nil {
 		return nil, ErrNoTransport
 	}
-	if cfg.MaxBatchSize > cfg.QueueSize {
-		cfg.MaxBatchSize = cfg.QueueSize
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Client{
 		cfg:           cfg,
-		queue:         make(chan *event, cfg.QueueSize),
+		queue:         make(chan *event, defaultQueueSize),
 		cancel:        cancel,
 		done:          make(chan struct{}),
 		logger:        cfg.Logger,
@@ -229,14 +226,10 @@ func (c *Client) Close(ctx context.Context) error {
 
 func (c *Client) run(ctx context.Context) {
 	defer close(c.done)
-	ticker := time.NewTicker(c.cfg.FlushInterval)
+	ticker := time.NewTicker(defaultFlushInterval)
 	defer ticker.Stop()
-	batch := make([]*event, 0, c.cfg.MaxBatchSize)
-	totalLimit := c.cfg.MaxTotalSeries
-	var totals map[string]float64
-	if totalLimit > 0 {
-		totals = make(map[string]float64, min(totalLimit, c.cfg.MaxBatchSize))
-	}
+	batch := make([]*event, 0, defaultMaxBatchSize)
+	totals := make(map[string]float64, min(defaultMaxTotalSeries, defaultMaxBatchSize))
 	flush := func() {
 		if len(batch) == 0 {
 			return
@@ -257,13 +250,13 @@ func (c *Client) run(ctx context.Context) {
 				continue
 			}
 			if ev.typ == metricTypeTotal {
-				if !c.applyTotal(ev, totals, totalLimit) {
+				if !c.applyTotal(ev, totals, defaultMaxTotalSeries) {
 					releaseEvent(ev)
 					continue
 				}
 			}
 			batch = append(batch, ev)
-			if len(batch) >= c.cfg.MaxBatchSize {
+			if len(batch) >= defaultMaxBatchSize {
 				flush()
 			}
 		case <-ctx.Done():
@@ -273,13 +266,13 @@ func (c *Client) run(ctx context.Context) {
 				case ev := <-c.queue:
 					if ev != nil {
 						if ev.typ == metricTypeTotal {
-							if !c.applyTotal(ev, totals, totalLimit) {
+							if !c.applyTotal(ev, totals, defaultMaxTotalSeries) {
 								releaseEvent(ev)
 								continue
 							}
 						}
 						batch = append(batch, ev)
-						if len(batch) >= c.cfg.MaxBatchSize {
+						if len(batch) >= defaultMaxBatchSize {
 							flush()
 						}
 					}
@@ -324,7 +317,7 @@ func (c *Client) flush(events []*event) {
 	if c.stopSending.Load() {
 		return
 	}
-	builder := newBatchBuilder(&c.cfg, len(events))
+	builder := newBatchBuilder(len(events))
 	for _, ev := range events {
 		builder.add(ev)
 	}
@@ -335,7 +328,7 @@ func (c *Client) flush(events []*event) {
 	if c.cfg.Verbose {
 		c.logFlushSummary(payload)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), c.cfg.FlushTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultFlushTimeout)
 	defer cancel()
 	if err := c.cfg.Transport.Send(ctx, payload); err != nil {
 		if IsStopIngestError(err) {

@@ -17,7 +17,6 @@ package main
 import (
 	"context"
 	"log"
-	"time"
 
 	"github.com/prostoteam/statokgo"
 )
@@ -28,12 +27,8 @@ func main() {
 	workload := "payments-api"
 
 	if _, err := statok.Init(workload, statok.Config{
-		Endpoint:         endpoint,  // creates default HTTP transport
-		APIKey:           "123_xxx", // raw token: <client_id>_<secret>, no Bearer prefix
-		FlushInterval:    200 * time.Millisecond,
-		MaxBatchSize:     256,
-		LocalAggCounters: true, // sum identical counters per batch
-		ValueMode:        statok.ValueAggregationAuto,
+		Endpoint: endpoint,  // creates default HTTP transport
+		APIKey:   "123_xxx", // raw token: <client_id>_<secret>, no Bearer prefix
 	}); err != nil {
 		log.Fatal(err)
 	}
@@ -61,49 +56,30 @@ If `Endpoint` is empty and `Transport` is nil, the client defaults to the public
 
 - **Non-blocking hot path**: Count/Total/Value never block or panic. When the bounded queue is full, the event is
   dropped.
-- **Bounded resources**: Queue size, batch size, max aggregated series per batch, and total-series cache are
-  configurable.
-- **Background flushing**: A worker goroutine batches events and flushes on size (`MaxBatchSize`) or time (
-  `FlushInterval`). Network I/O never runs in the caller goroutine.
+- **Bounded resources**: Queue size, batch size, max aggregated series per batch, and total-series cache are fixed
+  internally to keep memory bounded without exposing tuning knobs.
+- **Background flushing**: A worker goroutine batches events and flushes on size or time. Network I/O never runs in the
+  caller goroutine.
 - **Safe labels**: Label slices are copied so caller mutations cannot affect in-flight batches.
 - **Errors are isolated**: Transport errors are logged (via `Logger`) but never returned to the caller; the worker keeps
   running.
 - **Non-retryable auth handling**: By default, HTTP `401 Unauthorized` or API error code `unauthorized` disables further
-  ingest attempts in the current client instance. Configure additional stop conditions via `StopStatusCodes` and
-  `StopResponseCodes`.
+  ingest attempts in the current client instance.
 
 ## Configuration reference
 
-`statok.Config` fields (defaults applied when zero-valued):
+`statok.Config` fields:
 Workload is supplied separately to `Init`/`NewClient` and becomes the required `workload` label on every metric.
 
-| Field                   | Default                                  | Purpose                                                                                                                          |
-|-------------------------|------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------|
-| `Endpoint`              | `https://statok.dev0101.xyz/api/i/batch` | Ingest URL. When set and `Transport` is nil, an `HTTPTransport` is created and `/api/i/batch` is appended if no path is present. |
-| `APIKey`                | `""`                                     | Raw API token for HTTP transport. Required when using `HTTPTransport`; format must be `<client_id>_<secret>` (no `Bearer`).     |
-| `Transport`             | nil                                      | Any implementation of `Transport` (HTTP is provided). Must be safe for concurrent use.                                           |
-| `Logger`                | `log.Default()`                          | Receives internal errors and send summaries. Provide your own or silence by using a logger that discards output.                 |
-| `Verbose`               | `false`                                  | When true, logs the client version at startup and each flush with per-type counts and metric breakdowns.                         |
-| `QueueSize`             | 64_000                                   | Bounded channel depth; excess events are dropped.                                                                                |
-| `MaxBatchSize`          | 512                                      | Flush when this many events are collected. Also capped by `QueueSize`.                                                           |
-| `MaxSeriesPerBatch`     | 2_048                                    | Limits distinct series retained in aggregation maps per batch. Beyond this, events are forwarded without further aggregation.    |
-| `MaxTotalSeries`        | 2_048                                    | Caps the number of distinct series tracked for `Total` baselines; new series are dropped when the cap is reached.                |
-| `FlushInterval`         | 500ms                                    | Periodic flush cadence.                                                                                                          |
-| `FlushTimeout`          | 5s                                       | Context timeout applied to each transport send.                                                                                  |
-| `StopStatusCodes`       | `[401]`                                  | HTTP statuses treated as non-retryable. Matching responses disable further sends in this client process.                        |
-| `StopResponseCodes`     | `["unauthorized"]`                       | API error body `code` values treated as non-retryable. Matching responses disable further sends in this client process.         |
-| `LocalAggCounters`      | false                                    | When true, sums counter events with identical metric+labels within the batch.                                                    |
-| `ValueMode`             | `ValueAggregationNone`                   | Aggregation mode for values (see below).                                                                                         |
-| `ValueAggAutoThreshold` | 4                                        | Used by `ValueAggregationAuto`; number of raw samples to forward before switching to averaging.                                  |
+| Field       | Default                                  | Purpose                                                                                                                          |
+|-------------|------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------|
+| `Endpoint`  | `https://statok.dev0101.xyz/api/i/batch` | Ingest URL. When set and `Transport` is nil, an `HTTPTransport` is created and `/api/i/batch` is appended if no path is present. |
+| `APIKey`    | `""`                                     | Raw API token for HTTP transport. Required when using `HTTPTransport`; format must be `<client_id>_<secret>` (no `Bearer`).     |
+| `Transport` | nil                                      | Any implementation of `Transport` (HTTP is provided). Must be safe for concurrent use.                                           |
+| `Logger`    | `log.Default()`                          | Receives internal errors and send summaries. Provide your own or silence by using a logger that discards output.                 |
+| `Verbose`   | `false`                                  | When true, logs the client version at startup and each flush with per-type counts and metric breakdowns.                         |
 
-## Value aggregation modes
-
-- `ValueAggregationNone` (default): forward every call as-is.
-- `ValueAggregationBatch`: average values per metric+label within a batch; emits one value per series per flush.
-- `ValueAggregationAuto`: forward raw samples until `ValueAggAutoThreshold` per series in the window, then emit a single
-  average for that series. Balances fidelity for sparse series with compression for noisy ones.
-
-Counters can be aggregated independently via `LocalAggCounters` (sum within the batch, keeping the latest timestamp).
+Counters with identical metric+labels are summed within each batch. Values are forwarded as raw samples.
 
 ## Agent core metrics
 
@@ -143,10 +119,9 @@ Hostmetrics integrations can add system-adjacent metrics when enabled:
 
 - Caller overhead is a small allocation to clone labels plus a non-blocking channel send; when the queue is saturated,
   the event is dropped immediately.
-- Aggregation maps are bounded by `MaxSeriesPerBatch`; exceeding the cap falls back to per-event forwarding instead of
-  growing unbounded memory.
-- `Total` baselines are stored up to `MaxTotalSeries`; additional series are dropped silently.
+- Aggregation maps are bounded internally; exceeding the cap falls back to per-event forwarding instead of growing
+  unbounded memory.
+- `Total` baselines are stored up to an internal cap; additional series are dropped silently.
 - Network errors never surface to callers; they are logged and the worker continues with the next flush window.
-- HTTP stop statuses (`StopStatusCodes`, default `401`) and API response codes (`StopResponseCodes`, default
-  `unauthorized`) are treated as non-retryable; after one such response, the client drops new events until reinitialized
-  with updated config/credentials.
+- HTTP `401` and API response code `unauthorized` are treated as non-retryable; after one such response, the client
+  drops new events until reinitialized with updated config/credentials.

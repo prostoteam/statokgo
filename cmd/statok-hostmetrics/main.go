@@ -98,15 +98,9 @@ func initClient(workload string, endpoint string, apiKey string, verbose bool) e
 		return errors.New("STATOK_API_KEY is required")
 	}
 	_, err := statok.Init(workload, statok.Config{
-		Endpoint:          endpoint,
-		APIKey:            apiKey,
-		QueueSize:         64_000,
-		MaxBatchSize:      2_000,
-		MaxSeriesPerBatch: 5_000,
-		FlushInterval:     2 * time.Second,
-		LocalAggCounters:  true,
-		ValueMode:         statok.ValueAggregationBatch,
-		Verbose:           verbose,
+		Endpoint: endpoint,
+		APIKey:   apiKey,
+		Verbose:  verbose,
 	})
 	if errors.Is(err, statok.ErrInvalidAPIKey) {
 		return fmt.Errorf("invalid STATOK_API_KEY: %w", err)

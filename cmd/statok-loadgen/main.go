@@ -49,14 +49,8 @@ func main() {
 	}
 
 	_, err = statok.Init(workload, statok.Config{
-		Endpoint:          "http://localhost:8085/api/i/batch",
-		APIKey:            apiKey,
-		QueueSize:         400_000,
-		MaxBatchSize:      1_000_000,
-		MaxSeriesPerBatch: 30_000,
-		FlushInterval:     2 * time.Second,
-		LocalAggCounters:  true,
-		ValueMode:         statok.ValueAggregationBatch,
+		Endpoint: "http://localhost:8085/api/i/batch",
+		APIKey:   apiKey,
 	})
 	if err != nil {
 		log.Fatalf("statok: init failed: %v", err)

@@ -3,7 +3,6 @@ package statok_test
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/prostoteam/statokgo"
 )
@@ -20,11 +19,7 @@ func (m *memoryTransport) Send(_ context.Context, p *statok.Payload) error {
 func ExampleClient() {
 	mt := &memoryTransport{}
 	client, err := statok.NewClient("example-app", statok.Config{
-		Transport:        mt,
-		FlushInterval:    50 * time.Millisecond,
-		MaxBatchSize:     16,
-		LocalAggCounters: true,
-		ValueMode:        statok.ValueAggregationBatch,
+		Transport: mt,
 	})
 	if err != nil {
 		panic(err)
@@ -40,5 +35,5 @@ func ExampleClient() {
 		len(mt.batches[0].Counters),
 		len(mt.batches[0].Values))
 	// Output:
-	// batches=1 counters=1 values=1
+	// batches=1 counters=1 values=5
 }

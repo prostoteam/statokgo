@@ -11,63 +11,26 @@ import (
 )
 
 const (
-	defaultQueueSize             = 64 * 1024
-	defaultMaxBatchSize          = 512
-	defaultMaxSeriesPerBatch     = 2048
-	defaultMaxTotalSeries        = defaultMaxSeriesPerBatch
-	defaultFlushInterval         = 500 * time.Millisecond
-	defaultFlushTimeout          = 5 * time.Second
-	defaultEndpointHost          = "statok.dev0101.xyz"
-	defaultIngestPath            = "/api/i/batch"
-	defaultStopStatusCode        = 401
-	defaultStopResponseCode      = "unauthorized"
-	defaultValueAggAutoThreshold = 4
-	workloadMaxLen               = 100
+	defaultQueueSize         = 64 * 1024
+	defaultMaxBatchSize      = 512
+	defaultMaxSeriesPerBatch = 2048
+	defaultMaxTotalSeries    = defaultMaxSeriesPerBatch
+	defaultFlushInterval     = 500 * time.Millisecond
+	defaultFlushTimeout      = 5 * time.Second
+	defaultEndpointHost      = "statok.dev0101.xyz"
+	defaultIngestPath        = "/api/i/batch"
+	defaultStopStatusCode    = 401
+	defaultStopResponseCode  = "unauthorized"
+	workloadMaxLen           = 100
 )
 
-// ValueAggregationMode describes how value metrics are handled inside the client.
-type ValueAggregationMode uint8
-
-const (
-	// ValueAggregationNone forwards every Value call as-is.
-	ValueAggregationNone ValueAggregationMode = iota
-	// ValueAggregationBatch averages values per metric/label within a flushed batch
-	// so the ingester receives one representative sample per unique series.
-	ValueAggregationBatch
-	// ValueAggregationAuto forwards raw values until the per-series sample count
-	// exceeds ValueAggAutoThreshold within a flush window, then switches to
-	// averaged emission for that series.
-	ValueAggregationAuto
-)
-
-// Config tunes client resource usage and behavior. All limits are best-effort; when
-// the process is overloaded new events are dropped instead of blocking callers.
+// Config contains the public settings needed to connect the client.
 type Config struct {
-	Endpoint          string
-	APIKey            string
-	Transport         Transport
-	Logger            Logger
-	Verbose           bool
-	QueueSize         int
-	MaxBatchSize      int
-	MaxSeriesPerBatch int
-	// MaxTotalSeries caps the number of distinct series tracked for Total deltas.
-	MaxTotalSeries int
-	FlushInterval  time.Duration
-	FlushTimeout   time.Duration
-	// StopStatusCodes controls which HTTP response statuses are treated as
-	// non-retryable and should disable further ingest attempts in this client.
-	// Applies to HTTPTransport (default: [401]).
-	StopStatusCodes []int
-	// StopResponseCodes controls which API error body `code` values are treated
-	// as non-retryable and should disable further ingest attempts in this client.
-	// Applies to HTTPTransport (default: ["unauthorized"]).
-	StopResponseCodes []string
-	LocalAggCounters  bool
-	ValueMode         ValueAggregationMode
-	// ValueAggAutoThreshold controls when ValueAggregationAuto switches a series
-	// from raw forwarding to averaged emission within a flush window.
-	ValueAggAutoThreshold int
+	Endpoint  string
+	APIKey    string
+	Transport Transport
+	Logger    Logger
+	Verbose   bool
 }
 
 // Logger is the minimal logging interface used by the library. The default logger
@@ -81,42 +44,20 @@ type noopLogger struct{}
 func (noopLogger) Printf(string, ...any) {}
 
 func (c *Config) applyDefaults() error {
-	if c.QueueSize <= 0 {
-		c.QueueSize = defaultQueueSize
-	}
-	if c.MaxBatchSize <= 0 {
-		c.MaxBatchSize = defaultMaxBatchSize
-	}
-	if c.MaxSeriesPerBatch <= 0 {
-		c.MaxSeriesPerBatch = defaultMaxSeriesPerBatch
-	}
-	if c.MaxTotalSeries <= 0 {
-		c.MaxTotalSeries = defaultMaxTotalSeries
-	}
-	if c.FlushInterval <= 0 {
-		c.FlushInterval = defaultFlushInterval
-	}
-	if c.FlushTimeout <= 0 {
-		c.FlushTimeout = defaultFlushTimeout
-	}
 	if c.Endpoint == "" && c.Transport == nil {
 		c.Endpoint = EndpointFromHost(defaultEndpointHost)
 	}
 	if c.Endpoint != "" {
 		c.Endpoint = ensureIngestPath(c.Endpoint)
 	}
-	c.StopStatusCodes = normalizeStopStatusCodes(c.StopStatusCodes)
-	c.StopResponseCodes = normalizeStopResponseCodes(c.StopResponseCodes)
 	if c.Logger == nil {
 		c.Logger = log.Default()
 	}
 	if c.Transport == nil && c.Endpoint != "" {
 		c.Transport = &HTTPTransport{
-			Endpoint:          c.Endpoint,
-			APIKey:            c.APIKey,
-			Logger:            c.Logger,
-			StopStatusCodes:   cloneStatusCodes(c.StopStatusCodes),
-			StopResponseCodes: cloneStopResponseCodes(c.StopResponseCodes),
+			Endpoint: c.Endpoint,
+			APIKey:   c.APIKey,
+			Logger:   c.Logger,
 		}
 	}
 	if ht, ok := c.Transport.(*HTTPTransport); ok {
@@ -138,24 +79,9 @@ func (c *Config) applyDefaults() error {
 		}
 		ht.APIKey = transportAPIKey
 		c.APIKey = transportAPIKey
-		if len(ht.StopStatusCodes) == 0 {
-			ht.StopStatusCodes = cloneStatusCodes(c.StopStatusCodes)
-		} else {
-			ht.StopStatusCodes = normalizeStopStatusCodes(ht.StopStatusCodes)
-			c.StopStatusCodes = cloneStatusCodes(ht.StopStatusCodes)
-		}
-		if len(ht.StopResponseCodes) == 0 {
-			ht.StopResponseCodes = cloneStopResponseCodes(c.StopResponseCodes)
-		} else {
-			ht.StopResponseCodes = normalizeStopResponseCodes(ht.StopResponseCodes)
-			c.StopResponseCodes = cloneStopResponseCodes(ht.StopResponseCodes)
-		}
 	}
 	if c.Logger == nil {
 		c.Logger = noopLogger{}
-	}
-	if c.ValueAggAutoThreshold <= 0 {
-		c.ValueAggAutoThreshold = defaultValueAggAutoThreshold
 	}
 	return nil
 }
@@ -253,67 +179,4 @@ func hasAuthorizationHeader(h map[string][]string) bool {
 		return false
 	}
 	return false
-}
-
-func normalizeStopStatusCodes(in []int) []int {
-	if len(in) == 0 {
-		return []int{defaultStopStatusCode}
-	}
-	out := make([]int, 0, len(in))
-	seen := make(map[int]struct{}, len(in))
-	for _, code := range in {
-		if code < 100 || code > 599 {
-			continue
-		}
-		if _, ok := seen[code]; ok {
-			continue
-		}
-		seen[code] = struct{}{}
-		out = append(out, code)
-	}
-	if len(out) == 0 {
-		return []int{defaultStopStatusCode}
-	}
-	return out
-}
-
-func cloneStatusCodes(in []int) []int {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]int, len(in))
-	copy(out, in)
-	return out
-}
-
-func normalizeStopResponseCodes(in []string) []string {
-	if len(in) == 0 {
-		return []string{defaultStopResponseCode}
-	}
-	out := make([]string, 0, len(in))
-	seen := make(map[string]struct{}, len(in))
-	for _, raw := range in {
-		code := strings.ToLower(strings.TrimSpace(raw))
-		if code == "" {
-			continue
-		}
-		if _, ok := seen[code]; ok {
-			continue
-		}
-		seen[code] = struct{}{}
-		out = append(out, code)
-	}
-	if len(out) == 0 {
-		return []string{defaultStopResponseCode}
-	}
-	return out
-}
-
-func cloneStopResponseCodes(in []string) []string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]string, len(in))
-	copy(out, in)
-	return out
 }
