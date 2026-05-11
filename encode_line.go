@@ -13,16 +13,17 @@ type seriesDef struct {
 
 // encodeLinePayload encodes the payload using the dictionary-based line protocol:
 //
-//	H|2|s
+//	H|2|s or H|3|s when unique events are present
 //	S|id|metric|label1|label2|...
 //	c|id|value|timestamp
 //	v|id|value|timestamp
+//	u|id|uniqueId|timestamp
 func encodeLinePayload(p *Payload) []byte {
-	if p == nil || (len(p.Counters) == 0 && len(p.Values) == 0) {
+	if p == nil || p.empty() {
 		return nil
 	}
 
-	totalEvents := len(p.Counters) + len(p.Values)
+	totalEvents := len(p.Counters) + len(p.Values) + len(p.Uniques)
 	seriesIndex := make(map[string]int, totalEvents)
 	seriesList := make([]seriesDef, 0, totalEvents)
 	nextID := 0
@@ -49,12 +50,19 @@ func encodeLinePayload(p *Payload) []byte {
 	for _, v := range p.Values {
 		_ = getSeriesID(v.Metric, v.Labels)
 	}
+	for _, u := range p.Uniques {
+		_ = getSeriesID(u.Metric, u.Labels)
+	}
 
 	var buf bytes.Buffer
 	buf.Grow(totalEvents * 32) // heuristic
 
 	// Header defines protocol version and timestamp unit.
-	buf.WriteString("H|2|s\n")
+	if len(p.Uniques) > 0 {
+		buf.WriteString("H|3|s\n")
+	} else {
+		buf.WriteString("H|2|s\n")
+	}
 
 	// Series dictionary lines.
 	for id, s := range seriesList {
@@ -94,6 +102,17 @@ func encodeLinePayload(p *Payload) []byte {
 		buf.WriteByte('\n')
 	}
 
+	writeUnique := func(seriesID int, uniqueID string, ts int64) {
+		buf.WriteByte('u')
+		buf.WriteByte('|')
+		buf.WriteString(strconv.FormatInt(int64(seriesID), 10))
+		buf.WriteByte('|')
+		buf.WriteString(uniqueID)
+		buf.WriteByte('|')
+		buf.WriteString(strconv.FormatInt(ts, 10))
+		buf.WriteByte('\n')
+	}
+
 	for _, c := range p.Counters {
 		id := getSeriesID(c.Metric, c.Labels)
 		writeCounter(id, c.Value, c.Timestamp)
@@ -101,6 +120,10 @@ func encodeLinePayload(p *Payload) []byte {
 	for _, v := range p.Values {
 		id := getSeriesID(v.Metric, v.Labels)
 		writeValue(id, v.Value, v.Timestamp)
+	}
+	for _, u := range p.Uniques {
+		id := getSeriesID(u.Metric, u.Labels)
+		writeUnique(id, u.UniqueID, u.Timestamp)
 	}
 
 	return buf.Bytes()

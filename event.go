@@ -13,14 +13,16 @@ const (
 	metricTypeValue
 	// metricTypeTotal is internal-only and converted to a counter delta before sending.
 	metricTypeTotal
+	metricTypeUnique
 )
 
 type event struct {
-	typ    metricType
-	name   string
-	value  float64
-	labels []string
-	ts     time.Time
+	typ      metricType
+	name     string
+	value    float64
+	uniqueID string
+	labels   []string
+	ts       time.Time
 }
 
 var eventPool = sync.Pool{
@@ -47,6 +49,12 @@ func borrowEvent(typ metricType, name string, value float64, workloadLabel strin
 	return e
 }
 
+func borrowUniqueEvent(name string, uniqueID string, workloadLabel string, labels []string) *event {
+	e := borrowEvent(metricTypeUnique, name, 0, workloadLabel, labels)
+	e.uniqueID = uniqueID
+	return e
+}
+
 func releaseEvent(e *event) {
 	if e == nil {
 		return
@@ -54,6 +62,7 @@ func releaseEvent(e *event) {
 	e.typ = 0
 	e.name = ""
 	e.value = 0
+	e.uniqueID = ""
 	e.labels = e.labels[:0]
 	eventPool.Put(e)
 }

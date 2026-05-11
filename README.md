@@ -1,7 +1,7 @@
 # Statok Go Client
 
 Lightweight, non-blocking Go library for emitting Statok metrics from any service or job. The client batches and ships
-counter and value events to a Statok keeping the caller fast, safe, and resource-bounded.
+counter, unique, and value events to a Statok keeping the caller fast, safe, and resource-bounded.
 
 ## Install
 
@@ -34,7 +34,9 @@ func main() {
 	}
 
 	// Non-blocking calls; dropped silently if the queue is full.
+	userID := uint32(42)
 	statok.Count("requests", 1, "service=api", statok.Label("method", "GET"))
+	statok.CountUnique(userID, "daily_active_users", "service=api")
 	statok.Total("host.net.kb", 2048, "iface=eth0", "dir=rx")
 	statok.Value("latency_ms", 123.4, "service=api", "endpoint=/login")
 	statok.ValueSparse("host.fs.capacity_kb", 1024*1024, "mount=/")
@@ -44,9 +46,9 @@ func main() {
 }
 ```
 
-Use `statok.Count` for counter deltas, `statok.Total` for monotonic counter totals (first sample is baseline), and
-`statok.Value` for sampled values. All accept labels either as `"k=v"` strings or via `statok.Label(k, v)` which
-sanitizes `=` and control characters.
+Use `statok.Count` for counter deltas, `statok.CountUnique` for unique occurrences, `statok.Total` for monotonic
+counter totals (first sample is baseline), and `statok.Value` for sampled values. All accept labels either as `"k=v"`
+strings or via `statok.Label(k, v)` which sanitizes `=` and control characters.
 
 If `Endpoint` is empty and `Transport` is nil, the client defaults to the public ingest host
 `https://statok.dev0101.xyz/api/i/batch`. For HTTP transport, `APIKey` is required and should be the
@@ -55,7 +57,7 @@ without parsing or rewriting it.
 
 ## Core behaviors
 
-- **Non-blocking hot path**: Count/Total/Value never block or panic. When the bounded queue is full, the event is
+- **Non-blocking hot path**: Count/CountUnique/Total/Value never block or panic. When the bounded queue is full, the event is
   dropped.
 - **Bounded resources**: Queue size, batch size, max aggregated series per batch, and total-series cache are fixed
   internally to keep memory bounded without exposing tuning knobs.
@@ -80,7 +82,8 @@ Workload is supplied separately to `Init`/`NewClient` and becomes the required `
 | `Logger`    | `log.Default()`                          | Receives internal errors and send summaries. Provide your own or silence by using a logger that discards output.                 |
 | `Verbose`   | `false`                                  | When true, logs the client version at startup and each flush with per-type counts and metric breakdowns.                         |
 
-Counters with identical metric+labels are summed within each batch. Values are forwarded as raw samples.
+Counters with identical metric+labels are summed within each batch. Unique events with the same unique ID and identical
+metric+labels may be deduplicated within a flush window. Values are forwarded as raw samples.
 
 ## Agent core metrics
 
@@ -101,7 +104,7 @@ Hostmetrics integrations can add system-adjacent metrics when enabled:
 
 - Create a client with `statok.NewClient(workload, cfg)` or set the package-level default with
   `statok.Init(workload, cfg)` and then call
-  `statok.Count/Value` helpers.
+  `statok.Count/CountUnique/Value` helpers.
 - Call `client.Close(ctx)` during shutdown to flush the queue. Close drains without blocking the caller goroutine; it
   honors the provided context for the final send.
 - Inspect `client.Dropped()` to see how many events were rejected because the queue was full (not exposed to callers
@@ -114,6 +117,8 @@ Hostmetrics integrations can add system-adjacent metrics when enabled:
 - The `workload` label is injected automatically from the workload argument passed to `Init`/`NewClient` as the first
   label on every metric; do not pass your own `workload=...`
   label (events are dropped if you do).
+- `CountUnique` accepts non-negative integers that fit `uint32`, strings, and byte slices as unique IDs. String and byte
+  IDs are hashed to a stable 32-bit decimal ID before transport; the unique ID is never sent as a label.
 - Avoid unbounded label cardinality; prefer coarse keys such as `service`, `host`, `region`, `status`.
 
 ## Performance & safety notes

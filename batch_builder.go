@@ -5,6 +5,7 @@ import "strings"
 type batchBuilder struct {
 	payload     Payload
 	counterAggs map[string]*CounterEvent
+	uniqueSeen  map[string]struct{}
 }
 
 func newBatchBuilder(capacity int) *batchBuilder {
@@ -12,8 +13,10 @@ func newBatchBuilder(capacity int) *batchBuilder {
 	if capacity > 0 {
 		b.payload.Counters = make([]CounterEvent, 0, capacity)
 		b.payload.Values = make([]ValueEvent, 0, capacity)
+		b.payload.Uniques = make([]UniqueEvent, 0, capacity)
 	}
 	b.counterAggs = make(map[string]*CounterEvent, min(capacity, defaultMaxSeriesPerBatch))
+	b.uniqueSeen = make(map[string]struct{}, min(capacity, defaultMaxSeriesPerBatch))
 	return b
 }
 
@@ -28,6 +31,8 @@ func (b *batchBuilder) add(e *event) {
 			Labels:    cloneLabels(e.labels),
 			Timestamp: e.ts.Unix(),
 		})
+	case metricTypeUnique:
+		b.addUnique(e)
 	}
 }
 
@@ -56,6 +61,23 @@ func (b *batchBuilder) addCounter(e *event) {
 		Timestamp: e.ts.Unix(),
 	}
 	b.counterAggs[key] = agg
+}
+
+func (b *batchBuilder) addUnique(e *event) {
+	if e.uniqueID == "" {
+		return
+	}
+	key := seriesKey(e.name, e.labels) + "\x01" + e.uniqueID
+	if _, ok := b.uniqueSeen[key]; ok {
+		return
+	}
+	b.uniqueSeen[key] = struct{}{}
+	b.payload.Uniques = append(b.payload.Uniques, UniqueEvent{
+		Metric:    e.name,
+		UniqueID:  e.uniqueID,
+		Labels:    cloneLabels(e.labels),
+		Timestamp: e.ts.Unix(),
+	})
 }
 
 func (b *batchBuilder) build() *Payload {

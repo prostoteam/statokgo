@@ -22,10 +22,11 @@ type Transport interface {
 type Payload struct {
 	Counters []CounterEvent
 	Values   []ValueEvent
+	Uniques  []UniqueEvent
 }
 
 func (p *Payload) empty() bool {
-	return len(p.Counters) == 0 && len(p.Values) == 0
+	return len(p.Counters) == 0 && len(p.Values) == 0 && len(p.Uniques) == 0
 }
 
 // CounterEvent represents an aggregated counter metric.
@@ -44,9 +45,17 @@ type ValueEvent struct {
 	Timestamp int64
 }
 
+// UniqueEvent represents one unique metric occurrence.
+type UniqueEvent struct {
+	Metric    string
+	UniqueID  string
+	Labels    []string
+	Timestamp int64
+}
+
 // HTTPTransport is a minimal HTTP implementation of Transport for
 // local development and agents that talk to the ingester's HTTP endpoint.
-// Events are encoded using the dictionary-based line protocol (v2, seconds).
+// Events are encoded using the dictionary-based line protocol (v2/v3, seconds).
 type HTTPTransport struct {
 	Endpoint string
 	APIKey   string

@@ -103,6 +103,13 @@ func Count(metric string, delta float64, labels ...string) {
 	}
 }
 
+// CountUnique records one unique occurrence using the default client.
+func CountUnique(uniqueID any, metric string, labels ...string) {
+	if c := Default(); c != nil {
+		c.CountUnique(uniqueID, metric, labels...)
+	}
+}
+
 // Total records a monotonic counter total using the default client.
 func Total(metric string, total float64, labels ...string) {
 	if c := Default(); c != nil {
@@ -129,6 +136,16 @@ func ValueSparse(metric string, value float64, labels ...string) {
 // Count records a counter delta. Calls never block; on overflow the event is dropped.
 func (c *Client) Count(metric string, delta float64, labels ...string) {
 	c.enqueue(metricTypeCounter, metric, delta, labels)
+}
+
+// CountUnique records one unique occurrence. Calls never block; unsupported
+// unique ID values or queue overflow drop the event.
+func (c *Client) CountUnique(uniqueID any, metric string, labels ...string) {
+	encodedID, ok := canonicalUniqueID(uniqueID)
+	if !ok {
+		return
+	}
+	c.enqueueUnique(metric, encodedID, labels)
 }
 
 // Total records a monotonic counter total. Calls never block; on overflow the event is dropped.
@@ -175,6 +192,36 @@ func (c *Client) enqueue(typ metricType, metric string, value float64, labels []
 	default:
 	}
 	ev := borrowEvent(typ, metric, value, c.workloadLabel, labels)
+	select {
+	case c.queue <- ev:
+	default:
+		c.dropped.Add(1)
+		releaseEvent(ev)
+	}
+}
+
+func (c *Client) enqueueUnique(metric string, uniqueID string, labels []string) {
+	if metric == "" || uniqueID == "" {
+		return
+	}
+	if c.workloadLabel == "" {
+		return
+	}
+	if c.stopSending.Load() {
+		return
+	}
+	if hasWorkloadLabel(labels) {
+		if c.logger != nil {
+			c.logger.Printf("statok: workload label is reserved; drop metric %q", metric)
+		}
+		return
+	}
+	select {
+	case <-c.done:
+		return
+	default:
+	}
+	ev := borrowUniqueEvent(metric, uniqueID, c.workloadLabel, labels)
 	select {
 	case c.queue <- ev:
 	default:
@@ -349,16 +396,20 @@ func (c *Client) logFlushSummary(payload *Payload) {
 	}
 	cCounter := len(payload.Counters)
 	cValues := len(payload.Values)
+	cUniques := len(payload.Uniques)
 	metricCounters := countMetricsCounters(payload.Counters)
 	metricValues := countMetricsValues(payload.Values)
+	metricUniques := countMetricsUniques(payload.Uniques)
 	const maxMetricsToShow = 10
 	c.logger.Printf(
-		"statok: flushing %d events (counters=%d, values=%d); counter metrics: %s; value metrics: %s",
-		cCounter+cValues,
+		"statok: flushing %d events (counters=%d, values=%d, uniques=%d); counter metrics: %s; value metrics: %s; unique metrics: %s",
+		cCounter+cValues+cUniques,
 		cCounter,
 		cValues,
+		cUniques,
 		summarizeMetricCounts(metricCounters, maxMetricsToShow),
 		summarizeMetricCounts(metricValues, maxMetricsToShow),
+		summarizeMetricCounts(metricUniques, maxMetricsToShow),
 	)
 }
 
@@ -374,6 +425,17 @@ func countMetricsCounters(events []CounterEvent) map[string]int {
 }
 
 func countMetricsValues(events []ValueEvent) map[string]int {
+	if len(events) == 0 {
+		return nil
+	}
+	counts := make(map[string]int, min(len(events), defaultMaxSeriesPerBatch))
+	for _, ev := range events {
+		counts[ev.Metric]++
+	}
+	return counts
+}
+
+func countMetricsUniques(events []UniqueEvent) map[string]int {
 	if len(events) == 0 {
 		return nil
 	}
