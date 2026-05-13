@@ -17,9 +17,13 @@ const (
 	defaultEndpointHost      = "statok.dev0101.xyz"
 	defaultIngestPath        = "/api/i/batch"
 	defaultStopStatusCode    = 401
-	defaultStopResponseCode  = "unauthorized"
 	workloadMaxLen           = 100
 )
+
+var defaultStopResponseCodes = [...]string{
+	"unauthorized",
+	"unsupported_protocol_version",
+}
 
 // Config contains the public settings needed to connect the client.
 type Config struct {

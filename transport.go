@@ -260,7 +260,12 @@ func (t *HTTPTransport) shouldStopOnResponseCode(code string) bool {
 	}
 	configured := t.StopResponseCodes
 	if len(configured) == 0 {
-		return code == defaultStopResponseCode
+		for _, candidate := range defaultStopResponseCodes {
+			if strings.EqualFold(strings.TrimSpace(candidate), code) {
+				return true
+			}
+		}
+		return false
 	}
 	for _, candidate := range configured {
 		if strings.EqualFold(strings.TrimSpace(candidate), code) {
