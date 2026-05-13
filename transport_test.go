@@ -61,7 +61,8 @@ func TestHTTPTransportSendLargePayload(t *testing.T) {
 		Timestamp: baseTS + 9999,
 	})
 
-	want := encodeLinePayload(payload)
+	state := newDictionaryState()
+	want := encodeLinePayloadV4(payload, state, false)
 	if want == nil {
 		t.Fatalf("expected encoded payload, got nil")
 	}
@@ -78,8 +79,8 @@ func TestHTTPTransportSendLargePayload(t *testing.T) {
 	if gotLines := bytes.Count(want, []byte{'\n'}); gotLines != wantLines {
 		t.Fatalf("encoded payload lines = %d, want %d", gotLines, wantLines)
 	}
-	if !bytes.HasPrefix(want, []byte("H|2|s\n")) {
-		t.Fatalf("payload missing header: %q", string(want[:min(len(want), 6)]))
+	if !bytes.HasPrefix(want, []byte("H|4|s|")) {
+		t.Fatalf("payload missing v4 header: %q", string(want[:min(len(want), 12)]))
 	}
 
 	var received []byte
@@ -99,11 +100,11 @@ func TestHTTPTransportSendLargePayload(t *testing.T) {
 		t.Fatalf("Send() error = %v", err)
 	}
 
-	if len(received) != len(want) {
-		t.Fatalf("sent payload length = %d, want %d", len(received), len(want))
+	if !bytes.HasPrefix(received, []byte("H|4|s|")) {
+		t.Fatalf("sent payload missing v4 header")
 	}
-	if !bytes.Equal(received, want) {
-		t.Fatalf("sent payload mismatched contents")
+	if gotLines := bytes.Count(received, []byte{'\n'}); gotLines != wantLines {
+		t.Fatalf("sent payload lines = %d, want %d", gotLines, wantLines)
 	}
 }
 
@@ -204,5 +205,66 @@ func TestHTTPTransportAuthorizationIntegration(t *testing.T) {
 	}
 	if err := withAuthTransport.Send(context.Background(), payload); err != nil {
 		t.Fatalf("Send() error = %v, want nil", err)
+	}
+}
+
+func TestHTTPTransportResyncsDictionaryOnUnknownDictionary(t *testing.T) {
+	payload := &Payload{
+		Counters: []CounterEvent{{
+			Metric:    "counter_metric_1",
+			Value:     1,
+			Labels:    []string{Label("env", "test")},
+			Timestamp: 1730000000,
+		}},
+	}
+
+	requestCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		body, _ := io.ReadAll(r.Body)
+		lines := strings.Split(strings.TrimSpace(string(body)), "\n")
+		hasSeriesDef := false
+		for _, line := range lines {
+			if strings.HasPrefix(line, "S|") {
+				hasSeriesDef = true
+				break
+			}
+		}
+		if requestCount == 1 {
+			if !hasSeriesDef {
+				t.Fatalf("first request must define series dictionary")
+			}
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		if requestCount == 2 {
+			if hasSeriesDef {
+				t.Fatalf("second request must reuse cached dictionary")
+			}
+			w.WriteHeader(http.StatusConflict)
+			_, _ = io.WriteString(w, `{"code":"unknown_series_dictionary","message":"unknown series dictionary"}`)
+			return
+		}
+		if requestCount == 3 {
+			if !hasSeriesDef {
+				t.Fatalf("third request must resync dictionary after conflict")
+			}
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		t.Fatalf("unexpected extra request %d", requestCount)
+	}))
+	defer srv.Close()
+
+	tr := &HTTPTransport{Endpoint: srv.URL}
+
+	if err := tr.Send(context.Background(), payload); err != nil {
+		t.Fatalf("first Send() error = %v", err)
+	}
+	if err := tr.Send(context.Background(), payload); err != nil {
+		t.Fatalf("second Send() error = %v", err)
+	}
+	if requestCount != 3 {
+		t.Fatalf("request count = %d, want 3", requestCount)
 	}
 }

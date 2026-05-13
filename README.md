@@ -46,8 +46,8 @@ func main() {
 }
 ```
 
-Use `statok.Count` for counter deltas, `statok.CountUnique` for unique occurrences, `statok.Total` for monotonic
-counter totals (first sample is baseline), and `statok.Value` for sampled values. All accept labels either as `"k=v"`
+Use `statok.Count` for counter deltas, `statok.CountUnique` for unique occurrences with non-negative integer IDs,
+`statok.Total` for monotonic counter totals (first sample is baseline), and `statok.Value` for sampled values. All accept labels either as `"k=v"`
 strings or via `statok.Label(k, v)` which sanitizes `=` and control characters.
 
 If `Endpoint` is empty and `Transport` is nil, the client defaults to the public ingest host

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -55,13 +56,15 @@ type UniqueEvent struct {
 
 // HTTPTransport is a minimal HTTP implementation of Transport for
 // local development and agents that talk to the ingester's HTTP endpoint.
-// Events are encoded using the dictionary-based line protocol (v2/v3, seconds).
+// Events are encoded using reusable dictionary line protocol v4 (seconds).
 type HTTPTransport struct {
 	Endpoint string
 	APIKey   string
 	Client   *http.Client
 	Header   http.Header
 	Logger   Logger
+	mu       sync.Mutex
+	dict     *dictionaryState
 	// StopStatusCodes controls which HTTP statuses are treated as non-retryable.
 	// When matched, Send returns StopIngestError and client worker disables
 	// further transport sends (default: [401]).
@@ -124,18 +127,48 @@ func (t *HTTPTransport) Send(ctx context.Context, payload *Payload) error {
 	if payload == nil || payload.empty() {
 		return nil
 	}
-	body := encodeLinePayload(payload)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.dict == nil {
+		t.dict = newDictionaryState()
+	}
+
+	body := encodeLinePayloadV4(payload, t.dict, false)
 	if len(body) == 0 {
 		return nil
 	}
-	bodyLen := len(body)
+	result, err := t.sendBody(ctx, body)
+	if err == nil {
+		return nil
+	}
+
+	if result.statusCode == http.StatusConflict && result.responseCode == "unknown_series_dictionary" {
+		resyncBody := encodeLinePayloadV4(payload, t.dict, true)
+		if len(resyncBody) == 0 {
+			return err
+		}
+		_, retryErr := t.sendBody(ctx, resyncBody)
+		return retryErr
+	}
+	return err
+}
+
+type sendResult struct {
+	statusCode   int
+	responseCode string
+}
+
+func (t *HTTPTransport) sendBody(ctx context.Context, body []byte) (sendResult, error) {
+	result := sendResult{}
+
 	client := t.Client
 	if client == nil {
 		client = defaultHTTPClient
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.Endpoint, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("build request %s %s: %w", http.MethodPost, t.Endpoint, err)
+		return result, fmt.Errorf("build request %s %s: %w", http.MethodPost, t.Endpoint, err)
 	}
 	urlStr := req.URL.String()
 	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
@@ -147,20 +180,21 @@ func (t *HTTPTransport) Send(ctx context.Context, payload *Payload) error {
 	if t.APIKey != "" {
 		req.Header.Set("Authorization", t.APIKey)
 	}
+
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("POST %s: %w", urlStr, err)
+		return result, fmt.Errorf("POST %s: %w", urlStr, err)
 	}
 	defer resp.Body.Close()
+
+	result.statusCode = resp.StatusCode
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		io.Copy(io.Discard, resp.Body) // ensure the connection can be reused
-		if t.Logger != nil {
-			_ = bodyLen
-			//t.Logger.Printf("statok: sent %d bytes (%d counters, %d values)", bodyLen, len(payload.Counters), len(payload.Values))
-		}
-		return nil
+		io.Copy(io.Discard, resp.Body)
+		return result, nil
 	}
+
 	detail, responseCode := readErrorBody(resp.Body)
+	result.responseCode = responseCode
 	var sendErr error
 	if detail != "" {
 		sendErr = fmt.Errorf("POST %s: %s: %s", urlStr, resp.Status, detail)
@@ -168,12 +202,12 @@ func (t *HTTPTransport) Send(ctx context.Context, payload *Payload) error {
 		sendErr = fmt.Errorf("POST %s: %s", urlStr, resp.Status)
 	}
 	if t.shouldStopOnStatus(resp.StatusCode) || t.shouldStopOnResponseCode(responseCode) {
-		return &StopIngestError{
+		return result, &StopIngestError{
 			Code: resp.StatusCode,
 			Err:  sendErr,
 		}
 	}
-	return sendErr
+	return result, sendErr
 }
 
 func readErrorBody(r io.Reader) (detail string, responseCode string) {
