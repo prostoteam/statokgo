@@ -82,13 +82,22 @@ type StopIngestError struct {
 }
 
 type HTTPTransportError struct {
-	Method       string
-	Endpoint     string
-	StatusCode   int
-	Status       string
-	ResponseCode string
-	Detail       string
-	RequestBytes int
+	Method                       string
+	Endpoint                     string
+	StatusCode                   int
+	Status                       string
+	ResponseCode                 string
+	Detail                       string
+	RequestBytes                 int
+	SeriesDefinitions            int
+	SeriesDefinitionBytes        int
+	EventBytes                   int
+	LargestSeriesMetric          string
+	LargestSeriesDefinitionBytes int
+	LargestSeriesLabels          int
+	LargestLabelKey              string
+	LargestLabelBytes            int
+	LargestLabelValuePrefix      string
 }
 
 func (e *HTTPTransportError) Error() string {
@@ -253,14 +262,24 @@ func (t *HTTPTransport) sendBody(ctx context.Context, body []byte) (sendResult, 
 
 	detail, responseCode := readErrorBody(resp.Body)
 	result.responseCode = responseCode
+	diag := analyzeLinePayloadV4(body)
 	sendErr := &HTTPTransportError{
-		Method:       http.MethodPost,
-		Endpoint:     urlStr,
-		StatusCode:   resp.StatusCode,
-		Status:       resp.Status,
-		ResponseCode: responseCode,
-		Detail:       detail,
-		RequestBytes: len(body),
+		Method:                       http.MethodPost,
+		Endpoint:                     urlStr,
+		StatusCode:                   resp.StatusCode,
+		Status:                       resp.Status,
+		ResponseCode:                 responseCode,
+		Detail:                       detail,
+		RequestBytes:                 len(body),
+		SeriesDefinitions:            diag.seriesDefinitions,
+		SeriesDefinitionBytes:        diag.seriesDefinitionBytes,
+		EventBytes:                   diag.eventBytes,
+		LargestSeriesMetric:          diag.largestSeriesMetric,
+		LargestSeriesDefinitionBytes: diag.largestSeriesDefinitionBytes,
+		LargestSeriesLabels:          diag.largestSeriesLabels,
+		LargestLabelKey:              diag.largestLabelKey,
+		LargestLabelBytes:            diag.largestLabelBytes,
+		LargestLabelValuePrefix:      diag.largestLabelValuePrefix,
 	}
 	if t.shouldStopOnStatus(resp.StatusCode) || t.shouldStopOnResponseCode(responseCode) {
 		return result, &StopIngestError{
@@ -286,6 +305,93 @@ func compactErrorBody(raw string) string {
 		return ""
 	}
 	return strings.Join(strings.Fields(raw), " ")
+}
+
+type linePayloadDiagnostics struct {
+	seriesDefinitions            int
+	seriesDefinitionBytes        int
+	eventBytes                   int
+	largestSeriesMetric          string
+	largestSeriesDefinitionBytes int
+	largestSeriesLabels          int
+	largestLabelKey              string
+	largestLabelBytes            int
+	largestLabelValuePrefix      string
+}
+
+func analyzeLinePayloadV4(body []byte) linePayloadDiagnostics {
+	var diag linePayloadDiagnostics
+	lines := bytes.Split(body, []byte{'\n'})
+	for _, line := range lines {
+		if len(line) == 0 {
+			continue
+		}
+		lineBytes := len(line) + 1
+		if bytes.HasPrefix(line, []byte("S|")) {
+			diag.seriesDefinitions++
+			diag.seriesDefinitionBytes += lineBytes
+			if lineBytes > diag.largestSeriesDefinitionBytes {
+				diag.largestSeriesDefinitionBytes = lineBytes
+				metric, labels := parseSeriesDefinitionLine(line)
+				diag.largestSeriesMetric = truncateLogField(metric, 96)
+				diag.largestSeriesLabels = len(labels)
+				diag.largestLabelKey = ""
+				diag.largestLabelBytes = 0
+				diag.largestLabelValuePrefix = ""
+				for _, lbl := range labels {
+					if len(lbl) <= diag.largestLabelBytes {
+						continue
+					}
+					diag.largestLabelBytes = len(lbl)
+					diag.largestLabelKey, diag.largestLabelValuePrefix = summarizeLabelForLog(lbl)
+				}
+			}
+			continue
+		}
+		if !bytes.HasPrefix(line, []byte("H|")) {
+			diag.eventBytes += lineBytes
+		}
+	}
+	return diag
+}
+
+func parseSeriesDefinitionLine(line []byte) (metric string, labels []string) {
+	parts := bytes.Split(line, []byte{'|'})
+	if len(parts) < 3 {
+		return "", nil
+	}
+	metric = string(parts[2])
+	if len(parts) > 3 {
+		labels = make([]string, 0, len(parts)-3)
+		for _, part := range parts[3:] {
+			if len(part) == 0 {
+				continue
+			}
+			labels = append(labels, string(part))
+		}
+	}
+	return metric, labels
+}
+
+func summarizeLabelForLog(label string) (key string, valuePrefix string) {
+	key = "raw"
+	value := label
+	if idx := strings.IndexByte(label, '='); idx >= 0 {
+		key = label[:idx]
+		value = label[idx+1:]
+	}
+	return truncateLogField(key, 48), truncateLogField(value, 96)
+}
+
+func truncateLogField(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	if max <= 3 {
+		return s[:max]
+	}
+	return s[:max-3] + "..."
 }
 
 func extractResponseCode(raw []byte) string {

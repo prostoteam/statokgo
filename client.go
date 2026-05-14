@@ -410,6 +410,29 @@ func (c *Client) flushFailureDetails(payload *Payload, err error) string {
 			"status="+strconv.Itoa(transportErr.StatusCode),
 			"requestBytes="+strconv.Itoa(transportErr.RequestBytes),
 		)
+		if transportErr.SeriesDefinitions > 0 {
+			fields = append(fields,
+				"seriesDefCount="+strconv.Itoa(transportErr.SeriesDefinitions),
+				"seriesDefBytes="+strconv.Itoa(transportErr.SeriesDefinitionBytes),
+				"eventBytes="+strconv.Itoa(transportErr.EventBytes),
+				"largestSeriesDefBytes="+strconv.Itoa(transportErr.LargestSeriesDefinitionBytes),
+			)
+			if transportErr.LargestSeriesMetric != "" {
+				fields = append(fields, "largestSeriesMetric="+transportErr.LargestSeriesMetric)
+			}
+			if transportErr.LargestSeriesLabels > 0 {
+				fields = append(fields, "largestSeriesLabels="+strconv.Itoa(transportErr.LargestSeriesLabels))
+			}
+			if transportErr.LargestLabelBytes > 0 {
+				fields = append(fields, "largestLabelBytes="+strconv.Itoa(transportErr.LargestLabelBytes))
+			}
+			if transportErr.LargestLabelKey != "" {
+				fields = append(fields, "largestLabelKey="+transportErr.LargestLabelKey)
+			}
+			if transportErr.LargestLabelValuePrefix != "" {
+				fields = append(fields, "largestLabelValuePrefix="+transportErr.LargestLabelValuePrefix)
+			}
+		}
 		if transportErr.ResponseCode != "" {
 			fields = append(fields, "responseCode="+transportErr.ResponseCode)
 		}
