@@ -3,6 +3,7 @@ package statok
 import (
 	"context"
 	"errors"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -403,6 +404,7 @@ func (c *Client) flushFailureDetails(payload *Payload, err error) string {
 		"queueDepth=" + strconv.Itoa(len(c.queue)),
 		"dropped=" + strconv.FormatUint(c.dropped.Load(), 10),
 	}
+	fields = append(fields, summarizePayloadValueLimits(payload)...)
 	var transportErr *HTTPTransportError
 	if errors.As(err, &transportErr) {
 		fields = append(fields,
@@ -438,6 +440,125 @@ func (c *Client) flushFailureDetails(payload *Payload, err error) string {
 		}
 	}
 	return strings.Join(fields, " ")
+}
+
+const (
+	maxIngestCounterValue = float64(^uint32(0))
+	maxIngestValueValue   = float64(^uint32(0) / 10)
+)
+
+type numericSeriesDiag struct {
+	metric string
+	value  float64
+	labels string
+}
+
+type numericLimitDiag struct {
+	negative  int
+	nonFinite int
+	overMax   int
+	maxSeen   numericSeriesDiag
+}
+
+func summarizePayloadValueLimits(payload *Payload) []string {
+	if payload == nil {
+		return nil
+	}
+
+	counterDiag := numericLimitDiag{}
+	for _, ev := range payload.Counters {
+		updateNumericLimitDiag(&counterDiag, ev.Metric, ev.Value, ev.Labels, maxIngestCounterValue)
+	}
+
+	valueDiag := numericLimitDiag{}
+	for _, ev := range payload.Values {
+		updateNumericLimitDiag(&valueDiag, ev.Metric, ev.Value, ev.Labels, maxIngestValueValue)
+	}
+
+	var fields []string
+	if counterDiag.negative > 0 || counterDiag.nonFinite > 0 || counterDiag.overMax > 0 {
+		fields = append(fields,
+			"counterNegative="+strconv.Itoa(counterDiag.negative),
+			"counterNonFinite="+strconv.Itoa(counterDiag.nonFinite),
+			"counterOverMax="+strconv.Itoa(counterDiag.overMax),
+		)
+		if counterDiag.maxSeen.metric != "" {
+			fields = append(fields,
+				"maxCounterMetric="+counterDiag.maxSeen.metric,
+				"maxCounterValue="+strconv.FormatFloat(counterDiag.maxSeen.value, 'f', 2, 64),
+			)
+			if counterDiag.maxSeen.labels != "" {
+				fields = append(fields, "maxCounterLabels="+counterDiag.maxSeen.labels)
+			}
+		}
+	}
+	if valueDiag.negative > 0 || valueDiag.nonFinite > 0 || valueDiag.overMax > 0 {
+		fields = append(fields,
+			"valueNegative="+strconv.Itoa(valueDiag.negative),
+			"valueNonFinite="+strconv.Itoa(valueDiag.nonFinite),
+			"valueOverMax="+strconv.Itoa(valueDiag.overMax),
+		)
+		if valueDiag.maxSeen.metric != "" {
+			fields = append(fields,
+				"maxValueMetric="+valueDiag.maxSeen.metric,
+				"maxValueValue="+strconv.FormatFloat(valueDiag.maxSeen.value, 'f', 2, 64),
+			)
+			if valueDiag.maxSeen.labels != "" {
+				fields = append(fields, "maxValueLabels="+valueDiag.maxSeen.labels)
+			}
+		}
+	}
+	return fields
+}
+
+func updateNumericLimitDiag(diag *numericLimitDiag, metric string, value float64, labels []string, maxAllowed float64) {
+	if diag == nil {
+		return
+	}
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		diag.nonFinite++
+		return
+	}
+	if value < 0 {
+		diag.negative++
+	}
+	if value > maxAllowed {
+		diag.overMax++
+	}
+	if metric == "" {
+		return
+	}
+	if diag.maxSeen.metric == "" || value > diag.maxSeen.value {
+		diag.maxSeen = numericSeriesDiag{
+			metric: truncateLogField(metric, 48),
+			value:  value,
+			labels: summarizeLabelsForLog(labels, 3, 96),
+		}
+	}
+}
+
+func summarizeLabelsForLog(labels []string, maxLabels int, maxBytes int) string {
+	if len(labels) == 0 || maxLabels <= 0 || maxBytes <= 0 {
+		return ""
+	}
+	var parts []string
+	total := 0
+	for _, label := range labels {
+		if label == "" {
+			continue
+		}
+		part := truncateLogField(label, 48)
+		nextTotal := total + len(part)
+		if len(parts) > 0 {
+			nextTotal++
+		}
+		if len(parts) >= maxLabels || nextTotal > maxBytes {
+			break
+		}
+		parts = append(parts, part)
+		total = nextTotal
+	}
+	return strings.Join(parts, ",")
 }
 
 func (c *Client) logFlushSummary(payload *Payload) {
