@@ -412,6 +412,27 @@ func (c *Client) flushFailureDetails(payload *Payload, err error) string {
 			"status="+strconv.Itoa(transportErr.StatusCode),
 			"requestBytes="+strconv.Itoa(transportErr.RequestBytes),
 		)
+		if transportErr.DictionarySession != "" {
+			fields = append(fields, "dictSession="+transportErr.DictionarySession)
+		}
+		if transportErr.DictionaryRevision > 0 || transportErr.DictionarySession != "" {
+			fields = append(fields, "dictRevision="+strconv.FormatUint(transportErr.DictionaryRevision, 10))
+		}
+		if transportErr.DictionarySeries > 0 {
+			fields = append(fields, "dictSeries="+strconv.Itoa(transportErr.DictionarySeries))
+		}
+		if transportErr.EventLines > 0 {
+			fields = append(fields, "eventLines="+strconv.Itoa(transportErr.EventLines))
+		}
+		if transportErr.EventSeriesMinID >= 0 {
+			fields = append(fields, "eventSeriesMinID="+strconv.Itoa(transportErr.EventSeriesMinID))
+		}
+		if transportErr.EventSeriesMaxID >= 0 {
+			fields = append(fields, "eventSeriesMaxID="+strconv.Itoa(transportErr.EventSeriesMaxID))
+		}
+		if transportErr.EventSeriesSamples != "" {
+			fields = append(fields, "eventSeries="+transportErr.EventSeriesSamples)
+		}
 		if transportErr.SeriesDefinitions > 0 {
 			fields = append(fields,
 				"seriesDefCount="+strconv.Itoa(transportErr.SeriesDefinitions),

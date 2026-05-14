@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -89,9 +90,16 @@ type HTTPTransportError struct {
 	ResponseCode                 string
 	Detail                       string
 	RequestBytes                 int
+	DictionarySession            string
+	DictionaryRevision           uint64
+	DictionarySeries             int
 	SeriesDefinitions            int
 	SeriesDefinitionBytes        int
+	EventLines                   int
 	EventBytes                   int
+	EventSeriesMinID             int
+	EventSeriesMaxID             int
+	EventSeriesSamples           string
 	LargestSeriesMetric          string
 	LargestSeriesDefinitionBytes int
 	LargestSeriesLabels          int
@@ -197,6 +205,9 @@ func (t *HTTPTransport) Send(ctx context.Context, payload *Payload) error {
 		return err
 	}
 	if result.statusCode == http.StatusConflict && result.responseCode == "unknown_series_dictionary" {
+		if t.Logger != nil {
+			t.Logger.Printf("statok: ingester dictionary miss, resetting local dictionary and retrying; %s", summarizeTransportError(err))
+		}
 		t.resetDictionaryLocked()
 		resyncBody := encodeLinePayloadV4(payload, t.dict, false)
 		if len(resyncBody) == 0 {
@@ -262,7 +273,7 @@ func (t *HTTPTransport) sendBody(ctx context.Context, body []byte) (sendResult, 
 
 	detail, responseCode := readErrorBody(resp.Body)
 	result.responseCode = responseCode
-	diag := analyzeLinePayloadV4(body)
+	diag := analyzeLinePayloadV4(body, t.dict)
 	sendErr := &HTTPTransportError{
 		Method:                       http.MethodPost,
 		Endpoint:                     urlStr,
@@ -271,9 +282,16 @@ func (t *HTTPTransport) sendBody(ctx context.Context, body []byte) (sendResult, 
 		ResponseCode:                 responseCode,
 		Detail:                       detail,
 		RequestBytes:                 len(body),
+		DictionarySession:            diag.dictionarySession,
+		DictionaryRevision:           diag.dictionaryRevision,
+		DictionarySeries:             diag.dictionarySeries,
 		SeriesDefinitions:            diag.seriesDefinitions,
 		SeriesDefinitionBytes:        diag.seriesDefinitionBytes,
+		EventLines:                   diag.eventLines,
 		EventBytes:                   diag.eventBytes,
+		EventSeriesMinID:             diag.eventSeriesMinID,
+		EventSeriesMaxID:             diag.eventSeriesMaxID,
+		EventSeriesSamples:           diag.eventSeriesSamples,
 		LargestSeriesMetric:          diag.largestSeriesMetric,
 		LargestSeriesDefinitionBytes: diag.largestSeriesDefinitionBytes,
 		LargestSeriesLabels:          diag.largestSeriesLabels,
@@ -308,9 +326,16 @@ func compactErrorBody(raw string) string {
 }
 
 type linePayloadDiagnostics struct {
+	dictionarySession            string
+	dictionaryRevision           uint64
+	dictionarySeries             int
 	seriesDefinitions            int
 	seriesDefinitionBytes        int
+	eventLines                   int
 	eventBytes                   int
+	eventSeriesMinID             int
+	eventSeriesMaxID             int
+	eventSeriesSamples           string
 	largestSeriesMetric          string
 	largestSeriesDefinitionBytes int
 	largestSeriesLabels          int
@@ -319,14 +344,30 @@ type linePayloadDiagnostics struct {
 	largestLabelValuePrefix      string
 }
 
-func analyzeLinePayloadV4(body []byte) linePayloadDiagnostics {
-	var diag linePayloadDiagnostics
+func analyzeLinePayloadV4(body []byte, state *dictionaryState) linePayloadDiagnostics {
+	diag := linePayloadDiagnostics{
+		eventSeriesMinID: -1,
+		eventSeriesMaxID: -1,
+	}
+	if state != nil {
+		diag.dictionarySeries = len(state.series)
+	}
 	lines := bytes.Split(body, []byte{'\n'})
+	sampleIDs := make(map[int]struct{}, 4)
+	sampleSeries := make([]string, 0, 4)
 	for _, line := range lines {
 		if len(line) == 0 {
 			continue
 		}
 		lineBytes := len(line) + 1
+		if bytes.HasPrefix(line, []byte("H|")) {
+			parts := bytes.SplitN(line, []byte{'|'}, 5)
+			if len(parts) >= 5 {
+				diag.dictionarySession = string(parts[3])
+				diag.dictionaryRevision, _ = strconv.ParseUint(string(parts[4]), 10, 64)
+			}
+			continue
+		}
 		if bytes.HasPrefix(line, []byte("S|")) {
 			diag.seriesDefinitions++
 			diag.seriesDefinitionBytes += lineBytes
@@ -348,11 +389,78 @@ func analyzeLinePayloadV4(body []byte) linePayloadDiagnostics {
 			}
 			continue
 		}
-		if !bytes.HasPrefix(line, []byte("H|")) {
-			diag.eventBytes += lineBytes
+		diag.eventLines++
+		diag.eventBytes += lineBytes
+		if len(line) < 3 || line[1] != '|' {
+			continue
 		}
+		parts := bytes.SplitN(line, []byte{'|'}, 4)
+		if len(parts) < 4 {
+			continue
+		}
+		seriesID, err := strconv.Atoi(string(parts[1]))
+		if err != nil {
+			continue
+		}
+		if diag.eventSeriesMinID == -1 || seriesID < diag.eventSeriesMinID {
+			diag.eventSeriesMinID = seriesID
+		}
+		if diag.eventSeriesMaxID == -1 || seriesID > diag.eventSeriesMaxID {
+			diag.eventSeriesMaxID = seriesID
+		}
+		if len(sampleSeries) >= 4 {
+			continue
+		}
+		if _, ok := sampleIDs[seriesID]; ok {
+			continue
+		}
+		sampleIDs[seriesID] = struct{}{}
+		if state != nil && seriesID >= 0 && seriesID < len(state.series) {
+			sampleSeries = append(sampleSeries, fmt.Sprintf("%d:%s", seriesID, truncateLogField(state.series[seriesID].metric, 48)))
+			continue
+		}
+		sampleSeries = append(sampleSeries, strconv.Itoa(seriesID))
+	}
+	if len(sampleSeries) > 0 {
+		diag.eventSeriesSamples = strings.Join(sampleSeries, ",")
 	}
 	return diag
+}
+
+func summarizeTransportError(err error) string {
+	var transportErr *HTTPTransportError
+	if !errors.As(err, &transportErr) || transportErr == nil {
+		if err == nil {
+			return ""
+		}
+		return err.Error()
+	}
+	fields := []string{
+		"endpoint=" + transportErr.Endpoint,
+		"status=" + strconv.Itoa(transportErr.StatusCode),
+	}
+	if transportErr.DictionarySession != "" {
+		fields = append(fields, "dictSession="+transportErr.DictionarySession)
+	}
+	if transportErr.DictionaryRevision > 0 || transportErr.DictionarySession != "" {
+		fields = append(fields, "dictRevision="+strconv.FormatUint(transportErr.DictionaryRevision, 10))
+	}
+	if transportErr.DictionarySeries > 0 {
+		fields = append(fields, "dictSeries="+strconv.Itoa(transportErr.DictionarySeries))
+	}
+	if transportErr.SeriesDefinitions > 0 {
+		fields = append(fields, "seriesDefCount="+strconv.Itoa(transportErr.SeriesDefinitions))
+	}
+	if transportErr.EventLines > 0 {
+		fields = append(fields, "eventLines="+strconv.Itoa(transportErr.EventLines))
+	}
+	if transportErr.EventSeriesSamples != "" {
+		fields = append(fields, "eventSeries="+transportErr.EventSeriesSamples)
+	}
+	if transportErr.ResponseCode != "" {
+		fields = append(fields, "responseCode="+transportErr.ResponseCode)
+	}
+	return strings.Join(fields, " ")
 }
 
 func parseSeriesDefinitionLine(line []byte) (metric string, labels []string) {
