@@ -58,5 +58,5 @@ The client must prioritize safety, bounded resource usage, and efficient transpo
 - When adding new metrics - dont forget to add it to README.md
 - Max value for ingester is 429496729, so try to fit in this (e.g. use Kb instead of bytes where possible, or ms instead nanosec).
 - Always bump `const VersionString = "..."` in `./version.go`.
-- After pushing any library change, run `RELEASE_CONFIRM=1 scripts/release_tag.sh` to create and push the next semver patch tag and warm the Go module cache.
+- After pushing any library change, run `scripts/release_tag.sh` to create and push the next semver patch tag and warm the Go module cache.
 - Statok backend service with ingester at `../statok2/server`.

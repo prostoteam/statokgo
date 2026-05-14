@@ -36,22 +36,6 @@ echo "[release] latest: ${last_tag}"
 echo "[release] next:   ${next_tag}"
 echo "[release] going to: create and push ${next_tag} to ${REMOTE}, then run go get ${MODULE_PATH}@latest"
 
-if [[ "${RELEASE_CONFIRM:-}" != "1" ]]; then
-  if [[ ! -t 0 ]]; then
-    echo "[release] confirmation required in non-interactive mode; set RELEASE_CONFIRM=1 to continue" >&2
-    exit 1
-  fi
-
-  read -r -p "[release] Please confirm [Y/n]: " confirm
-  case "${confirm:-Y}" in
-    Y|y) ;;
-    *)
-      echo "[release] aborted"
-      exit 0
-      ;;
-  esac
-fi
-
 git tag "${next_tag}"
 echo "[release] created tag ${next_tag}"
 
