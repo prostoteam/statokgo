@@ -268,3 +268,103 @@ func TestHTTPTransportResyncsDictionaryOnUnknownDictionary(t *testing.T) {
 		t.Fatalf("request count = %d, want 3", requestCount)
 	}
 }
+
+func TestHTTPTransportResetsDictionaryWhenCapExceeded(t *testing.T) {
+	payload := &Payload{
+		Counters: []CounterEvent{{
+			Metric:    "fresh_metric",
+			Value:     1,
+			Labels:    []string{Label("env", "test")},
+			Timestamp: 1730000000,
+		}},
+	}
+
+	dict := newDictionaryState()
+	originalSessionID := dict.sessionID
+	for i := 0; i < defaultMaxDictionarySeries; i++ {
+		metric := fmt.Sprintf("seed_metric_%d", i)
+		key := seriesKey(metric, []string{Label("env", "seed")})
+		dict.seriesMap[key] = i
+		dict.series = append(dict.series, seriesDef{
+			metric: metric,
+			labels: []string{Label("env", "seed")},
+		})
+	}
+
+	var received string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		received = string(body)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	tr := &HTTPTransport{
+		Endpoint: srv.URL,
+		dict:     dict,
+	}
+	if err := tr.Send(context.Background(), payload); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+
+	if tr.dict == nil {
+		t.Fatal("transport dictionary = nil, want reset dictionary")
+	}
+	if tr.dict.sessionID == originalSessionID {
+		t.Fatalf("dictionary sessionID = %q, want reset from original", tr.dict.sessionID)
+	}
+	if len(tr.dict.series) != 1 {
+		t.Fatalf("dictionary series count = %d, want 1 after reset", len(tr.dict.series))
+	}
+	if strings.Contains(received, "seed_metric_0") {
+		t.Fatalf("request body unexpectedly included stale dictionary entries: %q", received)
+	}
+	if !strings.Contains(received, "S|0|fresh_metric|") {
+		t.Fatalf("request body missing fresh dictionary entry: %q", received)
+	}
+}
+
+func TestHTTPTransportResetsDictionaryOnRequestEntityTooLarge(t *testing.T) {
+	payload := &Payload{
+		Counters: []CounterEvent{{
+			Metric:    "requests",
+			Value:     1,
+			Labels:    []string{Label("env", "test")},
+			Timestamp: 1730000000,
+		}},
+	}
+
+	dict := newDictionaryState()
+	dict.seriesMap[seriesKey("requests", []string{Label("env", "test")})] = 0
+	dict.series = append(dict.series, seriesDef{
+		metric: "requests",
+		labels: []string{Label("env", "test")},
+	})
+	originalSessionID := dict.sessionID
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "body too large", http.StatusRequestEntityTooLarge)
+	}))
+	defer srv.Close()
+
+	tr := &HTTPTransport{
+		Endpoint: srv.URL,
+		dict:     dict,
+	}
+	err := tr.Send(context.Background(), payload)
+	if err == nil {
+		t.Fatal("Send() error = nil, want 413 error")
+	}
+	if !strings.Contains(err.Error(), "request_bytes=") {
+		t.Fatalf("error %q missing request_bytes detail", err)
+	}
+	if tr.dict == nil {
+		t.Fatal("transport dictionary = nil, want reset dictionary")
+	}
+	if tr.dict.sessionID == originalSessionID {
+		t.Fatalf("dictionary sessionID = %q, want reset from original", tr.dict.sessionID)
+	}
+	if len(tr.dict.series) != 0 {
+		t.Fatalf("dictionary series count = %d, want 0 after 413 reset", len(tr.dict.series))
+	}
+}

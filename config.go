@@ -8,16 +8,17 @@ import (
 )
 
 const (
-	defaultQueueSize         = 64 * 1024
-	defaultMaxBatchSize      = 512
-	defaultMaxSeriesPerBatch = 2048
-	defaultMaxTotalSeries    = defaultMaxSeriesPerBatch
-	defaultFlushInterval     = 500 * time.Millisecond
-	defaultFlushTimeout      = 5 * time.Second
-	defaultEndpointHost      = "statok.dev0101.xyz"
-	defaultIngestPath        = "/api/i/batch"
-	defaultStopStatusCode    = 401
-	workloadMaxLen           = 100
+	defaultQueueSize           = 64 * 1024
+	defaultMaxBatchSize        = 512
+	defaultMaxSeriesPerBatch   = 2048
+	defaultMaxDictionarySeries = defaultMaxSeriesPerBatch
+	defaultMaxTotalSeries      = defaultMaxSeriesPerBatch
+	defaultFlushInterval       = 500 * time.Millisecond
+	defaultFlushTimeout        = 5 * time.Second
+	defaultEndpointHost        = "statok.dev0101.xyz"
+	defaultIngestPath          = "/api/i/batch"
+	defaultStopStatusCode      = 401
+	workloadMaxLen             = 100
 )
 
 var defaultStopResponseCodes = [...]string{

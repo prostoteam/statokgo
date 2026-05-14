@@ -50,6 +50,7 @@ func encodeLinePayloadV4(p *Payload, state *dictionaryState, forceDefinitions bo
 		timestamp  int64
 	}
 	events := make([]encodedEvent, 0, totalEvents)
+	newSeriesIDs := make([]int, 0, totalEvents)
 	seriesChanged := false
 
 	getSeriesID := func(metric string, labels []string) int {
@@ -61,8 +62,9 @@ func encodeLinePayloadV4(p *Payload, state *dictionaryState, forceDefinitions bo
 		state.seriesMap[key] = id
 		state.series = append(state.series, seriesDef{
 			metric: metric,
-			labels: labels,
+			labels: cloneLabels(labels),
 		})
+		newSeriesIDs = append(newSeriesIDs, id)
 		seriesChanged = true
 		return id
 	}
@@ -106,19 +108,14 @@ func encodeLinePayloadV4(p *Payload, state *dictionaryState, forceDefinitions bo
 	buf.WriteByte('\n')
 
 	if sendDefinitions {
-		for id, s := range state.series {
-			buf.WriteString("S|")
-			buf.WriteString(strconv.Itoa(id))
-			buf.WriteByte('|')
-			buf.WriteString(s.metric)
-			for _, lbl := range s.labels {
-				if lbl == "" {
-					continue
-				}
-				buf.WriteByte('|')
-				buf.WriteString(lbl)
+		if forceDefinitions {
+			for id, s := range state.series {
+				writeSeriesDefinition(&buf, id, s)
 			}
-			buf.WriteByte('\n')
+		} else {
+			for _, id := range newSeriesIDs {
+				writeSeriesDefinition(&buf, id, state.series[id])
+			}
 		}
 	}
 
@@ -141,4 +138,19 @@ func encodeLinePayloadV4(p *Payload, state *dictionaryState, forceDefinitions bo
 	}
 
 	return buf.Bytes()
+}
+
+func writeSeriesDefinition(buf *bytes.Buffer, id int, s seriesDef) {
+	buf.WriteString("S|")
+	buf.WriteString(strconv.Itoa(id))
+	buf.WriteByte('|')
+	buf.WriteString(s.metric)
+	for _, lbl := range s.labels {
+		if lbl == "" {
+			continue
+		}
+		buf.WriteByte('|')
+		buf.WriteString(lbl)
+	}
+	buf.WriteByte('\n')
 }

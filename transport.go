@@ -101,12 +101,24 @@ func (e *HTTPTransportError) Error() string {
 	}
 	if e.Status != "" {
 		if e.Detail != "" {
+			if e.RequestBytes > 0 {
+				return fmt.Sprintf("%s %s: %s: %s (request_bytes=%d)", method, e.Endpoint, e.Status, e.Detail, e.RequestBytes)
+			}
 			return fmt.Sprintf("%s %s: %s: %s", method, e.Endpoint, e.Status, e.Detail)
+		}
+		if e.RequestBytes > 0 {
+			return fmt.Sprintf("%s %s: %s (request_bytes=%d)", method, e.Endpoint, e.Status, e.RequestBytes)
 		}
 		return fmt.Sprintf("%s %s: %s", method, e.Endpoint, e.Status)
 	}
 	if e.Detail != "" {
+		if e.RequestBytes > 0 {
+			return fmt.Sprintf("%s %s: %s (request_bytes=%d)", method, e.Endpoint, e.Detail, e.RequestBytes)
+		}
 		return fmt.Sprintf("%s %s: %s", method, e.Endpoint, e.Detail)
+	}
+	if e.RequestBytes > 0 {
+		return fmt.Sprintf("%s %s failed (request_bytes=%d)", method, e.Endpoint, e.RequestBytes)
 	}
 	return fmt.Sprintf("%s %s failed", method, e.Endpoint)
 }
@@ -160,9 +172,7 @@ func (t *HTTPTransport) Send(ctx context.Context, payload *Payload) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	if t.dict == nil {
-		t.dict = newDictionaryState()
-	}
+	t.ensureDictionaryLocked()
 
 	body := encodeLinePayloadV4(payload, t.dict, false)
 	if len(body) == 0 {
@@ -173,15 +183,33 @@ func (t *HTTPTransport) Send(ctx context.Context, payload *Payload) error {
 		return nil
 	}
 
+	if result.statusCode == http.StatusRequestEntityTooLarge {
+		t.resetDictionaryLocked()
+		return err
+	}
 	if result.statusCode == http.StatusConflict && result.responseCode == "unknown_series_dictionary" {
-		resyncBody := encodeLinePayloadV4(payload, t.dict, true)
+		t.resetDictionaryLocked()
+		resyncBody := encodeLinePayloadV4(payload, t.dict, false)
 		if len(resyncBody) == 0 {
 			return err
 		}
-		_, retryErr := t.sendBody(ctx, resyncBody)
+		retryResult, retryErr := t.sendBody(ctx, resyncBody)
+		if retryResult.statusCode == http.StatusRequestEntityTooLarge {
+			t.resetDictionaryLocked()
+		}
 		return retryErr
 	}
 	return err
+}
+
+func (t *HTTPTransport) ensureDictionaryLocked() {
+	if t.dict == nil || len(t.dict.series) >= defaultMaxDictionarySeries {
+		t.resetDictionaryLocked()
+	}
+}
+
+func (t *HTTPTransport) resetDictionaryLocked() {
+	t.dict = newDictionaryState()
 }
 
 type sendResult struct {
