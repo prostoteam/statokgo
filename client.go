@@ -385,9 +385,36 @@ func (c *Client) flush(events []*event) {
 			return
 		}
 		if c.logger != nil {
-			c.logger.Printf("statok: flush failed: %v", err)
+			c.logger.Printf("statok: flush failed: %v; %s", err, c.flushFailureDetails(payload, err))
 		}
 	}
+}
+
+func (c *Client) flushFailureDetails(payload *Payload, err error) string {
+	stats := summarizePayload(payload)
+	fields := []string{
+		"events=" + strconv.Itoa(stats.totalEvents),
+		"counters=" + strconv.Itoa(stats.counters),
+		"values=" + strconv.Itoa(stats.values),
+		"uniques=" + strconv.Itoa(stats.uniques),
+		"counterSeries=" + strconv.Itoa(stats.counterSeries),
+		"valueSeries=" + strconv.Itoa(stats.valueSeries),
+		"uniqueSeries=" + strconv.Itoa(stats.uniqueSeries),
+		"queueDepth=" + strconv.Itoa(len(c.queue)),
+		"dropped=" + strconv.FormatUint(c.dropped.Load(), 10),
+	}
+	var transportErr *HTTPTransportError
+	if errors.As(err, &transportErr) {
+		fields = append(fields,
+			"endpoint="+transportErr.Endpoint,
+			"status="+strconv.Itoa(transportErr.StatusCode),
+			"requestBytes="+strconv.Itoa(transportErr.RequestBytes),
+		)
+		if transportErr.ResponseCode != "" {
+			fields = append(fields, "responseCode="+transportErr.ResponseCode)
+		}
+	}
+	return strings.Join(fields, " ")
 }
 
 func (c *Client) logFlushSummary(payload *Payload) {
@@ -474,4 +501,29 @@ func summarizeMetricCounts(counts map[string]int, limit int) string {
 		sb.WriteString(" more")
 	}
 	return sb.String()
+}
+
+type payloadSummary struct {
+	totalEvents   int
+	counters      int
+	values        int
+	uniques       int
+	counterSeries int
+	valueSeries   int
+	uniqueSeries  int
+}
+
+func summarizePayload(payload *Payload) payloadSummary {
+	if payload == nil {
+		return payloadSummary{}
+	}
+	return payloadSummary{
+		totalEvents:   len(payload.Counters) + len(payload.Values) + len(payload.Uniques),
+		counters:      len(payload.Counters),
+		values:        len(payload.Values),
+		uniques:       len(payload.Uniques),
+		counterSeries: len(countMetricsCounters(payload.Counters)),
+		valueSeries:   len(countMetricsValues(payload.Values)),
+		uniqueSeries:  len(countMetricsUniques(payload.Uniques)),
+	}
 }

@@ -81,6 +81,36 @@ type StopIngestError struct {
 	Err  error
 }
 
+type HTTPTransportError struct {
+	Method       string
+	Endpoint     string
+	StatusCode   int
+	Status       string
+	ResponseCode string
+	Detail       string
+	RequestBytes int
+}
+
+func (e *HTTPTransportError) Error() string {
+	if e == nil {
+		return ""
+	}
+	method := e.Method
+	if method == "" {
+		method = http.MethodPost
+	}
+	if e.Status != "" {
+		if e.Detail != "" {
+			return fmt.Sprintf("%s %s: %s: %s", method, e.Endpoint, e.Status, e.Detail)
+		}
+		return fmt.Sprintf("%s %s: %s", method, e.Endpoint, e.Status)
+	}
+	if e.Detail != "" {
+		return fmt.Sprintf("%s %s: %s", method, e.Endpoint, e.Detail)
+	}
+	return fmt.Sprintf("%s %s failed", method, e.Endpoint)
+}
+
 func (e *StopIngestError) Error() string {
 	if e == nil {
 		return ""
@@ -195,11 +225,14 @@ func (t *HTTPTransport) sendBody(ctx context.Context, body []byte) (sendResult, 
 
 	detail, responseCode := readErrorBody(resp.Body)
 	result.responseCode = responseCode
-	var sendErr error
-	if detail != "" {
-		sendErr = fmt.Errorf("POST %s: %s: %s", urlStr, resp.Status, detail)
-	} else {
-		sendErr = fmt.Errorf("POST %s: %s", urlStr, resp.Status)
+	sendErr := &HTTPTransportError{
+		Method:       http.MethodPost,
+		Endpoint:     urlStr,
+		StatusCode:   resp.StatusCode,
+		Status:       resp.Status,
+		ResponseCode: responseCode,
+		Detail:       detail,
+		RequestBytes: len(body),
 	}
 	if t.shouldStopOnStatus(resp.StatusCode) || t.shouldStopOnResponseCode(responseCode) {
 		return result, &StopIngestError{
