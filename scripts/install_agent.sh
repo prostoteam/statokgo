@@ -181,6 +181,76 @@ validate_api_key_or_fail() {
   fi
 }
 
+build_probe_url() {
+  local host url
+  host="$(trim_ws "$STATOK_HOST_DEFAULT")"
+  [ -n "$host" ] || err "STATOK_HOST_DEFAULT is empty"
+
+  if [[ "$host" == http://* || "$host" == https://* ]]; then
+    url="$host"
+  else
+    url="https://$host"
+  fi
+
+  url="${url%/}"
+
+  if [[ "$url" == */api/i/probe ]]; then
+    printf '%s' "$url"
+    return 0
+  fi
+  if [[ "$url" == */api/i/batch ]]; then
+    printf '%s/api/i/probe' "${url%/api/i/batch}"
+    return 0
+  fi
+  if [[ "$url" == */api/i ]]; then
+    printf '%s/probe' "$url"
+    return 0
+  fi
+  printf '%s/api/i/probe' "$url"
+}
+
+probe_api_key_status() {
+  local url="$1"
+
+  if have_cmd curl; then
+    curl -sS -o /dev/null -w '%{http_code}' \
+      --connect-timeout 5 \
+      --max-time 10 \
+      --request POST \
+      --header "Authorization: $STATOK_API_KEY" \
+      "$url"
+    return $?
+  fi
+
+  if have_cmd wget; then
+    wget --server-response --quiet \
+      --method=POST \
+      --header="Authorization: $STATOK_API_KEY" \
+      --output-document=/dev/null \
+      "$url" 2>&1 | awk '/^  HTTP\/[0-9.]+ [0-9]+/{code=$2} END{print code}'
+    return 0
+  fi
+
+  return 1
+}
+
+verify_api_key_or_fail() {
+  local probe_url status
+  probe_url="$(build_probe_url)"
+  printf 'statok-install: checking API key...\n'
+  status="$(probe_api_key_status "$probe_url")" || err "could not verify API key: network/probe request failed"
+
+  if [ "$status" = "204" ]; then
+    printf 'statok-install: API key is valid.\n'
+    return 0
+  fi
+  if [ "$status" = "401" ]; then
+    err "API key is invalid or inactive"
+  fi
+
+  err "could not verify API key: probe returned HTTP ${status}"
+}
+
 prompt_api_key_from_tty() {
   local key
   [ -r /dev/tty ] || return 1
@@ -196,12 +266,14 @@ resolve_api_key() {
   if [ -n "$STATOK_API_KEY" ]; then
     STATOK_API_KEY="$(sanitize_api_key "$STATOK_API_KEY")"
     validate_api_key_or_fail "$STATOK_API_KEY"
+    verify_api_key_or_fail
     return 0
   fi
 
   if prompt_api_key_from_tty; then
     STATOK_API_KEY="$(sanitize_api_key "$STATOK_API_KEY")"
     validate_api_key_or_fail "$STATOK_API_KEY"
+    verify_api_key_or_fail
     return 0
   fi
 
