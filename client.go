@@ -459,8 +459,23 @@ func (c *Client) flushFailureDetails(payload *Payload, err error) string {
 		if transportErr.ResponseCode != "" {
 			fields = append(fields, "responseCode="+transportErr.ResponseCode)
 		}
+		if transportErr.Accepted >= 0 || transportErr.Dropped >= 0 || transportErr.Rejected >= 0 {
+			fields = append(
+				fields,
+				"responseAccepted="+strconv.Itoa(nonNegativeHeaderValue(transportErr.Accepted)),
+				"responseDropped="+strconv.Itoa(nonNegativeHeaderValue(transportErr.Dropped)),
+				"responseRejected="+strconv.Itoa(nonNegativeHeaderValue(transportErr.Rejected)),
+			)
+		}
 	}
 	return strings.Join(fields, " ")
+}
+
+func nonNegativeHeaderValue(v int) int {
+	if v < 0 {
+		return 0
+	}
+	return v
 }
 
 const (

@@ -89,6 +89,9 @@ type HTTPTransportError struct {
 	Status                       string
 	ResponseCode                 string
 	Detail                       string
+	Accepted                     int
+	Dropped                      int
+	Rejected                     int
 	RequestBytes                 int
 	DictionarySession            string
 	DictionaryRevision           uint64
@@ -281,6 +284,9 @@ func (t *HTTPTransport) sendBody(ctx context.Context, body []byte) (sendResult, 
 		Status:                       resp.Status,
 		ResponseCode:                 responseCode,
 		Detail:                       detail,
+		Accepted:                     parseIngestCountHeader(resp.Header.Get("X-Statok-Accepted")),
+		Dropped:                      parseIngestCountHeader(resp.Header.Get("X-Statok-Dropped")),
+		Rejected:                     parseIngestCountHeader(resp.Header.Get("X-Statok-Rejected")),
 		RequestBytes:                 len(body),
 		DictionarySession:            diag.dictionarySession,
 		DictionaryRevision:           diag.dictionaryRevision,
@@ -306,6 +312,18 @@ func (t *HTTPTransport) sendBody(ctx context.Context, body []byte) (sendResult, 
 		}
 	}
 	return result, sendErr
+}
+
+func parseIngestCountHeader(raw string) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return -1
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return -1
+	}
+	return value
 }
 
 func readErrorBody(r io.Reader) (detail string, responseCode string) {
@@ -451,6 +469,14 @@ func summarizeTransportError(err error) string {
 	if transportErr.SeriesDefinitions > 0 {
 		fields = append(fields, "seriesDefCount="+strconv.Itoa(transportErr.SeriesDefinitions))
 	}
+	if transportErr.Accepted >= 0 || transportErr.Dropped >= 0 || transportErr.Rejected >= 0 {
+		fields = append(
+			fields,
+			"accepted="+strconv.Itoa(maxHeaderValue(transportErr.Accepted)),
+			"dropped="+strconv.Itoa(maxHeaderValue(transportErr.Dropped)),
+			"rejected="+strconv.Itoa(maxHeaderValue(transportErr.Rejected)),
+		)
+	}
 	if transportErr.EventLines > 0 {
 		fields = append(fields, "eventLines="+strconv.Itoa(transportErr.EventLines))
 	}
@@ -461,6 +487,13 @@ func summarizeTransportError(err error) string {
 		fields = append(fields, "responseCode="+transportErr.ResponseCode)
 	}
 	return strings.Join(fields, " ")
+}
+
+func maxHeaderValue(v int) int {
+	if v < 0 {
+		return 0
+	}
+	return v
 }
 
 func parseSeriesDefinitionLine(line []byte) (metric string, labels []string) {
