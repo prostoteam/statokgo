@@ -166,6 +166,14 @@ is_valid_api_key() {
   return 0
 }
 
+sanitize_api_key() {
+  local key="$1"
+  key="$(printf '%s' "$key" | awk '{gsub(/\033\[[0-9;?]*[ -\/]*[@-~]/, ""); gsub(/\033[@-_]/, ""); printf "%s", $0}')"
+  key="$(printf '%s' "$key" | LC_ALL=C tr -d '\000-\037\177')"
+  key="$(printf '%s' "$key" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+  printf '%s' "$key"
+}
+
 validate_api_key_or_fail() {
   local key="$1"
   if ! is_valid_api_key "$key"; then
@@ -186,11 +194,13 @@ prompt_api_key_from_tty() {
 
 resolve_api_key() {
   if [ -n "$STATOK_API_KEY" ]; then
+    STATOK_API_KEY="$(sanitize_api_key "$STATOK_API_KEY")"
     validate_api_key_or_fail "$STATOK_API_KEY"
     return 0
   fi
 
   if prompt_api_key_from_tty; then
+    STATOK_API_KEY="$(sanitize_api_key "$STATOK_API_KEY")"
     validate_api_key_or_fail "$STATOK_API_KEY"
     return 0
   fi
