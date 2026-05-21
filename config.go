@@ -18,6 +18,7 @@ const (
 	defaultEndpointHost        = "statok.dev0101.xyz"
 	defaultIngestPath          = "/api/i/batch"
 	defaultStopStatusCode      = 401
+	workloadHeaderName         = "X-Statok-Workload"
 	workloadMaxLen             = 100
 )
 

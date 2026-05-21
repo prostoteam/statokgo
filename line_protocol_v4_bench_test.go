@@ -12,7 +12,7 @@ func benchmarkPayload(seriesCount, eventsPerSeries int) *Payload {
 	ts := int64(1700000000)
 	for i := 0; i < seriesCount; i++ {
 		metric := "bench.metric." + strconv.Itoa(i)
-		labels := []string{"workload=bench", "host=h" + strconv.Itoa(i)}
+		labels := []string{"host=h" + strconv.Itoa(i)}
 		for j := 0; j < eventsPerSeries; j++ {
 			p.Counters = append(p.Counters, CounterEvent{
 				Metric:    metric,

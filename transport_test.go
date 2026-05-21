@@ -95,7 +95,7 @@ func TestHTTPTransportSendLargePayload(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tr := &HTTPTransport{Endpoint: srv.URL}
+	tr := &HTTPTransport{Endpoint: srv.URL, Workload: "test-workload"}
 	if err := tr.Send(context.Background(), payload); err != nil {
 		t.Fatalf("Send() error = %v", err)
 	}
@@ -115,7 +115,7 @@ func TestHTTPTransportErrorIncludesEndpoint(t *testing.T) {
 	defer srv.Close()
 
 	endpoint := srv.URL + "/api/i/batch"
-	tr := &HTTPTransport{Endpoint: endpoint}
+	tr := &HTTPTransport{Endpoint: endpoint, Workload: "test-workload"}
 	payload := &Payload{
 		Counters: []CounterEvent{{
 			Metric:    "counter_metric_1",
@@ -139,9 +139,11 @@ func TestHTTPTransportErrorIncludesEndpoint(t *testing.T) {
 func TestHTTPTransportSendSetsAuthorizationHeader(t *testing.T) {
 	const apiKey = "123_secret-token"
 	var gotAuthorization string
+	var gotWorkload string
 	var gotCustomHeader string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuthorization = r.Header.Get("Authorization")
+		gotWorkload = r.Header.Get(workloadHeaderName)
 		gotCustomHeader = r.Header.Get("X-Custom")
 		w.WriteHeader(http.StatusAccepted)
 	}))
@@ -150,6 +152,7 @@ func TestHTTPTransportSendSetsAuthorizationHeader(t *testing.T) {
 	tr := &HTTPTransport{
 		Endpoint: srv.URL,
 		APIKey:   apiKey,
+		Workload: "api-a",
 		Header: http.Header{
 			"X-Custom": []string{"1"},
 		},
@@ -167,6 +170,9 @@ func TestHTTPTransportSendSetsAuthorizationHeader(t *testing.T) {
 	}
 	if gotAuthorization != apiKey {
 		t.Fatalf("Authorization = %q, want %q", gotAuthorization, apiKey)
+	}
+	if gotWorkload != "api-a" {
+		t.Fatalf("%s = %q, want %q", workloadHeaderName, gotWorkload, "api-a")
 	}
 	if gotCustomHeader != "1" {
 		t.Fatalf("X-Custom = %q, want %q", gotCustomHeader, "1")
@@ -192,7 +198,7 @@ func TestHTTPTransportAuthorizationIntegration(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	missingAuthTransport := &HTTPTransport{Endpoint: srv.URL}
+	missingAuthTransport := &HTTPTransport{Endpoint: srv.URL, Workload: "test-workload"}
 	if err := missingAuthTransport.Send(context.Background(), payload); err == nil {
 		t.Fatalf("Send() error = nil, want unauthorized error")
 	} else if !strings.Contains(err.Error(), "401") {
@@ -202,6 +208,7 @@ func TestHTTPTransportAuthorizationIntegration(t *testing.T) {
 	withAuthTransport := &HTTPTransport{
 		Endpoint: srv.URL,
 		APIKey:   apiKey,
+		Workload: "test-workload",
 	}
 	if err := withAuthTransport.Send(context.Background(), payload); err != nil {
 		t.Fatalf("Send() error = %v, want nil", err)
@@ -256,7 +263,7 @@ func TestHTTPTransportResyncsDictionaryOnUnknownDictionary(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tr := &HTTPTransport{Endpoint: srv.URL}
+	tr := &HTTPTransport{Endpoint: srv.URL, Workload: "test-workload"}
 
 	if err := tr.Send(context.Background(), payload); err != nil {
 		t.Fatalf("first Send() error = %v", err)
@@ -301,6 +308,7 @@ func TestHTTPTransportResetsDictionaryWhenCapExceeded(t *testing.T) {
 
 	tr := &HTTPTransport{
 		Endpoint: srv.URL,
+		Workload: "test-workload",
 		dict:     dict,
 	}
 	if err := tr.Send(context.Background(), payload); err != nil {
@@ -349,6 +357,7 @@ func TestHTTPTransportResetsDictionaryOnRequestEntityTooLarge(t *testing.T) {
 
 	tr := &HTTPTransport{
 		Endpoint: srv.URL,
+		Workload: "test-workload",
 		dict:     dict,
 	}
 	err := tr.Send(context.Background(), payload)

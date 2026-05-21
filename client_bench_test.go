@@ -94,12 +94,12 @@ func BenchmarkClientValueParallel(b *testing.B) {
 
 func BenchmarkClientCountDropWhenQueueFull(b *testing.B) {
 	c := &Client{
-		queue:         make(chan *event, 1),
-		done:          make(chan struct{}),
-		logger:        noopLogger{},
-		workloadLabel: Label("workload", "bench-workload"),
+		queue:    make(chan *event, 1),
+		done:     make(chan struct{}),
+		logger:   noopLogger{},
+		workload: "bench-workload",
 	}
-	c.queue <- borrowEvent(metricTypeCounter, "prefill", 1, c.workloadLabel, nil)
+	c.queue <- borrowEvent(metricTypeCounter, "prefill", 1, nil)
 
 	labels := []string{
 		Label("env", "prod"),
@@ -121,7 +121,6 @@ func BenchmarkBatchBuilderCounters(b *testing.B) {
 			name:  "bench.counter",
 			value: 1,
 			labels: []string{
-				Label("workload", "bench-workload"),
 				Label("env", "prod"),
 				Label("host", "bench-01"),
 				Label("shard", string(rune('a'+(i%8)))),
@@ -151,7 +150,6 @@ func BenchmarkBatchBuilderValues(b *testing.B) {
 			name:  "bench.value",
 			value: 42.5,
 			labels: []string{
-				Label("workload", "bench-workload"),
 				Label("env", "prod"),
 				Label("host", "bench-01"),
 				Label("shard", string(rune('a'+(i%8)))),

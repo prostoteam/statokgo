@@ -38,7 +38,7 @@ func main() {
 	var verbose bool
 	var workloadFlag stringFlag
 	var configPath string
-	flag.Var(&workloadFlag, "workload", "workload label injected into every metric")
+	flag.Var(&workloadFlag, "workload", "workload scope sent with every ingest request")
 	flag.Var(&workloadFlag, "w", "shorthand for --workload")
 	flag.StringVar(&configPath, "config", "", "path to YAML config (optional)")
 	flag.StringVar(&configPath, "c", "", "shorthand for --config")

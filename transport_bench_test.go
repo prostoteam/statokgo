@@ -29,6 +29,7 @@ func BenchmarkHTTPTransportSend(b *testing.B) {
 	newTransport := func() *HTTPTransport {
 		return &HTTPTransport{
 			Endpoint: "http://statok.test/api/i/batch",
+			Workload: "bench-workload",
 			Client: &http.Client{
 				Transport: benchmarkRoundTripper{},
 			},

@@ -31,15 +31,12 @@ var eventPool = sync.Pool{
 	},
 }
 
-func borrowEvent(typ metricType, name string, value float64, workloadLabel string, labels []string) *event {
+func borrowEvent(typ metricType, name string, value float64, labels []string) *event {
 	e := eventPool.Get().(*event)
 	e.typ = typ
 	e.name = name
 	e.value = value
 	e.labels = e.labels[:0]
-	if trimmed := strings.TrimSpace(workloadLabel); trimmed != "" {
-		e.labels = append(e.labels, trimmed)
-	}
 	for _, l := range labels {
 		if trimmed := strings.TrimSpace(l); trimmed != "" {
 			e.labels = append(e.labels, trimmed)
@@ -49,8 +46,8 @@ func borrowEvent(typ metricType, name string, value float64, workloadLabel strin
 	return e
 }
 
-func borrowUniqueEvent(name string, uniqueID string, workloadLabel string, labels []string) *event {
-	e := borrowEvent(metricTypeUnique, name, 0, workloadLabel, labels)
+func borrowUniqueEvent(name string, uniqueID string, labels []string) *event {
+	e := borrowEvent(metricTypeUnique, name, 0, labels)
 	e.uniqueID = uniqueID
 	return e
 }

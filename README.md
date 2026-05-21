@@ -72,7 +72,7 @@ without parsing or rewriting it.
 ## Configuration reference
 
 `statok.Config` fields:
-Workload is supplied separately to `Init`/`NewClient` and becomes the required `workload` label on every metric.
+Workload is supplied separately to `Init`/`NewClient` and is sent as the required `X-Statok-Workload` ingest header.
 
 | Field       | Default                                  | Purpose                                                                                                                          |
 |-------------|------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------|
@@ -114,9 +114,8 @@ Hostmetrics integrations can add system-adjacent metrics when enabled:
 
 - Labels may be provided as `"k=v"` strings or built with `statok.Label(k, v)`, which replaces `=`, `|`, and newlines
   with `_` to keep the line protocol well-formed.
-- The `workload` label is injected automatically from the workload argument passed to `Init`/`NewClient` as the first
-  label on every metric; do not pass your own `workload=...`
-  label (events are dropped if you do).
+- Workload is configured through the workload argument passed to `Init`/`NewClient`; do not pass your own
+  `workload=...` label (events are dropped if you do).
 - `CountUnique` accepts non-negative integers that fit `uint32`, strings, and byte slices as unique IDs. String and byte
   IDs are hashed to a stable 32-bit decimal ID before transport; the unique ID is never sent as a label.
 - Avoid unbounded label cardinality; prefer coarse keys such as `service`, `host`, `region`, `status`.

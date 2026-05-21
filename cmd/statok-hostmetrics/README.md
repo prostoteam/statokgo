@@ -7,7 +7,7 @@ Collection cadence:
 - Every 60s: filesystem usage, inode counts, uptime
 
 Metrics emitted by the agent (count metrics are deltas over the collection interval).
-All metrics include the `workload` label as the first label; the table lists additional labels.
+All metrics are sent with the configured workload scope; the table lists metric labels.
 
 | Metric                           | Kind  | Unit    | Labels                                                          |
 |----------------------------------|-------|---------|-----------------------------------------------------------------|
@@ -49,7 +49,7 @@ disable it even when instances are present.
 
 Agent flags:
 
-- `--workload` / `-w`: set the workload label (defaults to hostname; empty value is an error).
+- `--workload` / `-w`: set the workload scope (defaults to hostname; empty value is an error).
 - `--config` / `-c`: path to the YAML config file (optional).
 - `--verbose` / `-v`: enable verbose client logging.
 

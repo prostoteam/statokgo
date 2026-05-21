@@ -28,15 +28,15 @@ const (
 
 // Client implements the non-blocking Statok metrics API.
 type Client struct {
-	cfg           Config
-	queue         chan *event
-	cancel        context.CancelFunc
-	done          chan struct{}
-	dropped       atomic.Uint64
-	stopSending   atomic.Bool
-	logger        Logger
-	once          sync.Once
-	workloadLabel string
+	cfg         Config
+	queue       chan *event
+	cancel      context.CancelFunc
+	done        chan struct{}
+	dropped     atomic.Uint64
+	stopSending atomic.Bool
+	logger      Logger
+	once        sync.Once
+	workload    string
 }
 
 // NewClient builds a client with the provided workload and configuration and starts
@@ -52,14 +52,20 @@ func NewClient(workload string, cfg Config) (*Client, error) {
 	if cfg.Transport == nil {
 		return nil, ErrNoTransport
 	}
+	if ht, ok := cfg.Transport.(*HTTPTransport); ok {
+		cfg.Transport = &workloadHTTPTransport{
+			base:     ht,
+			workload: workload,
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Client{
-		cfg:           cfg,
-		queue:         make(chan *event, defaultQueueSize),
-		cancel:        cancel,
-		done:          make(chan struct{}),
-		logger:        cfg.Logger,
-		workloadLabel: Label("workload", workload),
+		cfg:      cfg,
+		queue:    make(chan *event, defaultQueueSize),
+		cancel:   cancel,
+		done:     make(chan struct{}),
+		logger:   cfg.Logger,
+		workload: workload,
 	}
 	if cfg.Verbose && c.logger != nil {
 		c.logger.Printf("statok: client version %s", Version())
@@ -175,7 +181,7 @@ func (c *Client) enqueue(typ metricType, metric string, value float64, labels []
 	if metric == "" {
 		return
 	}
-	if c.workloadLabel == "" {
+	if c.workload == "" {
 		return
 	}
 	if c.stopSending.Load() {
@@ -192,7 +198,7 @@ func (c *Client) enqueue(typ metricType, metric string, value float64, labels []
 		return
 	default:
 	}
-	ev := borrowEvent(typ, metric, value, c.workloadLabel, labels)
+	ev := borrowEvent(typ, metric, value, labels)
 	select {
 	case c.queue <- ev:
 	default:
@@ -205,7 +211,7 @@ func (c *Client) enqueueUnique(metric string, uniqueID string, labels []string) 
 	if metric == "" || uniqueID == "" {
 		return
 	}
-	if c.workloadLabel == "" {
+	if c.workload == "" {
 		return
 	}
 	if c.stopSending.Load() {
@@ -222,7 +228,7 @@ func (c *Client) enqueueUnique(metric string, uniqueID string, labels []string) 
 		return
 	default:
 	}
-	ev := borrowUniqueEvent(metric, uniqueID, c.workloadLabel, labels)
+	ev := borrowUniqueEvent(metric, uniqueID, labels)
 	select {
 	case c.queue <- ev:
 	default:

@@ -61,6 +61,7 @@ type UniqueEvent struct {
 type HTTPTransport struct {
 	Endpoint string
 	APIKey   string
+	Workload string
 	Client   *http.Client
 	Header   http.Header
 	Logger   Logger
@@ -73,6 +74,18 @@ type HTTPTransport struct {
 	// StopResponseCodes controls which API error body `code` values are treated
 	// as non-retryable (default: ["unauthorized"]).
 	StopResponseCodes []string
+}
+
+type workloadHTTPTransport struct {
+	base     *HTTPTransport
+	workload string
+}
+
+func (t *workloadHTTPTransport) Send(ctx context.Context, payload *Payload) error {
+	if t == nil || t.base == nil {
+		return errors.New("statok: HTTP transport is nil")
+	}
+	return t.base.send(ctx, payload, t.workload)
 }
 
 // StopIngestError marks a transport failure as non-retryable for the active client.
@@ -180,11 +193,18 @@ const maxErrorBodyBytes = 4096
 
 // Send implements Transport.
 func (t *HTTPTransport) Send(ctx context.Context, payload *Payload) error {
+	return t.send(ctx, payload, t.Workload)
+}
+
+func (t *HTTPTransport) send(ctx context.Context, payload *Payload, workload string) error {
 	if t == nil {
 		return errors.New("statok: HTTP transport is nil")
 	}
 	if t.Endpoint == "" {
 		return errors.New("statok: HTTP endpoint is empty")
+	}
+	if err := validateWorkload(workload); err != nil {
+		return err
 	}
 	if payload == nil || payload.empty() {
 		return nil
@@ -198,7 +218,7 @@ func (t *HTTPTransport) Send(ctx context.Context, payload *Payload) error {
 	if len(body) == 0 {
 		return nil
 	}
-	result, err := t.sendBody(ctx, body)
+	result, err := t.sendBody(ctx, body, workload)
 	if err == nil {
 		return nil
 	}
@@ -216,7 +236,7 @@ func (t *HTTPTransport) Send(ctx context.Context, payload *Payload) error {
 		if len(resyncBody) == 0 {
 			return err
 		}
-		retryResult, retryErr := t.sendBody(ctx, resyncBody)
+		retryResult, retryErr := t.sendBody(ctx, resyncBody, workload)
 		if retryResult.statusCode == http.StatusRequestEntityTooLarge {
 			t.resetDictionaryLocked()
 		}
@@ -240,7 +260,7 @@ type sendResult struct {
 	responseCode string
 }
 
-func (t *HTTPTransport) sendBody(ctx context.Context, body []byte) (sendResult, error) {
+func (t *HTTPTransport) sendBody(ctx context.Context, body []byte, workload string) (sendResult, error) {
 	result := sendResult{}
 
 	client := t.Client
@@ -260,6 +280,9 @@ func (t *HTTPTransport) sendBody(ctx context.Context, body []byte) (sendResult, 
 	}
 	if t.APIKey != "" {
 		req.Header.Set("Authorization", t.APIKey)
+	}
+	if workload = strings.TrimSpace(workload); workload != "" {
+		req.Header.Set(workloadHeaderName, workload)
 	}
 
 	resp, err := client.Do(req)

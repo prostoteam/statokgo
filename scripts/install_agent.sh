@@ -64,7 +64,7 @@ Usage:
   $(basename "$0") [--workload <value>] [--system|--user] [<agent-args...>]
 
 Options (installer):
-  -w, --workload   Optional workload label passed to agent at runtime
+  -w, --workload   Optional workload scope passed to agent at runtime
   --system         Install a system service (default when running as root)
   --user           Install a user service (default when running as non-root)
   --api-key-file   Path to env file with STATOK_API_KEY (scope default if omitted)
