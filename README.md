@@ -48,7 +48,7 @@ func main() {
 
 Use `statok.Count` for counter deltas, `statok.CountUnique` for unique occurrences with non-negative integer IDs,
 `statok.Total` for monotonic counter totals (first sample is baseline), and `statok.Value` for sampled values. All accept labels either as `"k=v"`
-strings or via `statok.Label(k, v)` which sanitizes `=` and control characters.
+strings or via `statok.Label(k, v)` which sanitizes `=`, `|`, `\n`, and `\r`.
 
 If `Endpoint` is empty and `Transport` is nil, the client defaults to the public ingest host
 `https://statok.dev0101.xyz/api/i/batch`. For HTTP transport, `APIKey` is required and should be the
@@ -87,7 +87,7 @@ Workload is supplied separately to `Init`/`NewClient` and is sent as the require
 | `Verbose`   | `false`                                  | When true, logs the client version at startup and each flush with per-type counts and metric breakdowns.                         |
 
 Counters with identical metric+labels are summed within each batch. Unique events with the same unique ID and identical
-metric+labels may be deduplicated within a flush window. Values are forwarded as raw samples.
+metric+labels are deduplicated within each built batch (no cross-batch dedup guarantee). Values are forwarded as raw samples.
 
 ## Agent core metrics
 
@@ -109,8 +109,8 @@ Hostmetrics integrations can add system-adjacent metrics when enabled:
 - Create a client with `statok.NewClient(workload, cfg)` or set the package-level default with
   `statok.Init(workload, cfg)` and then call
   `statok.Count/CountUnique/Value` helpers.
-- Call `client.Close(ctx)` during shutdown to flush the queue. Close drains without blocking the caller goroutine; it
-  honors the provided context for the final send.
+- Call `client.Close(ctx)` during shutdown to flush the queue. `Close` waits for worker shutdown and final flush
+  attempts, and returns early if `ctx` is canceled or reaches deadline.
 - Inspect `client.Dropped()` to see how many events were rejected because the queue was full (not exposed to callers
   otherwise).
 
@@ -120,9 +120,23 @@ Hostmetrics integrations can add system-adjacent metrics when enabled:
   with `_` to keep the line protocol well-formed.
 - Workload is configured through the workload argument passed to `Init`/`NewClient`; do not pass your own
   `workload=...` label (events are dropped if you do).
-- `CountUnique` accepts non-negative integers that fit `uint32`, strings, and byte slices as unique IDs. String and byte
-  IDs are hashed to a stable 32-bit decimal ID before transport; the unique ID is never sent as a label.
+- `CountUnique` accepts non-negative integers and decimal-string IDs (`string`/`[]byte` parsed via unsigned base-10).
+  Invalid or negative IDs are dropped; the unique ID is sent as the dedicated `unique_id` field, never as a label.
 - Avoid unbounded label cardinality; prefer coarse keys such as `service`, `host`, `region`, `status`.
+
+## Best practices (agent metrics)
+
+- Pick stable base labels and reuse them everywhere: `service`, `host`, `env`, `region`.
+- Use `Total` for cumulative OS counters and keep units ingest-safe:
+  `statok.Total("host.net.kb", rxKB, "iface=eth0", "dir=rx")`,
+  `statok.Total("host.disk.io_ops", readOps, "disk=sda", "dir=read")`.
+- Use `Value` for sampled gauges and rates:
+  `statok.Value("host.cpu.usage_pct", usagePct, "cpu=all")`,
+  `statok.Value("host.mem.used_kb", usedKB)`.
+- Use `ValueSparse` for capacities or rarely changing gauges so downstream can carry forward:
+  `statok.ValueSparse("host.fs.capacity_kb", capacityKB, "mount=/")`.
+- Keep label cardinality bounded: prefer `status=2xx` over `status=200`, avoid per-request IDs in labels.
+- Keep values within ingest limits and practical units (KB, ms, pct) instead of very large raw units.
 
 ## Performance & safety notes
 
