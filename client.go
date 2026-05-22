@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,15 +30,17 @@ const (
 
 // Client implements the non-blocking Statok metrics API.
 type Client struct {
-	cfg         Config
-	queue       chan *event
-	cancel      context.CancelFunc
-	done        chan struct{}
-	dropped     atomic.Uint64
-	stopSending atomic.Bool
-	logger      Logger
-	once        sync.Once
-	workload    string
+	cfg          Config
+	queue        chan *event
+	cancel       context.CancelFunc
+	done         chan struct{}
+	batchSeq     atomic.Uint64
+	dropped      atomic.Uint64
+	stopSending  atomic.Bool
+	logger       Logger
+	once         sync.Once
+	workload     string
+	batchSession string
 }
 
 // NewClient builds a client with the provided workload and configuration and starts
@@ -60,18 +64,29 @@ func NewClient(workload string, cfg Config) (*Client, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Client{
-		cfg:      cfg,
-		queue:    make(chan *event, defaultQueueSize),
-		cancel:   cancel,
-		done:     make(chan struct{}),
-		logger:   cfg.Logger,
-		workload: workload,
+		cfg:          cfg,
+		queue:        make(chan *event, defaultQueueSize),
+		cancel:       cancel,
+		done:         make(chan struct{}),
+		logger:       cfg.Logger,
+		workload:     workload,
+		batchSession: newBatchSessionID(),
 	}
 	if cfg.Verbose && c.logger != nil {
 		c.logger.Printf("statok: client version %s", Version())
 	}
 	go c.run(ctx)
 	return c, nil
+}
+
+type retryBatch struct {
+	payload     *Payload
+	attempts    int
+	nextAttempt time.Time
+}
+
+func newBatchSessionID() string {
+	return strconv.FormatInt(time.Now().UnixNano(), 36)
 }
 
 // Default client handling -----------------------------------------------------
@@ -283,12 +298,15 @@ func (c *Client) run(ctx context.Context) {
 	ticker := time.NewTicker(defaultFlushInterval)
 	defer ticker.Stop()
 	batch := make([]*event, 0, defaultMaxBatchSize)
+	// Retries stay off the hot queue so transient transport failures cannot
+	// feed back into caller-facing backpressure or unbounded memory growth.
+	retryQueue := make([]retryBatch, 0, defaultRetryQueueSize)
 	totals := make(map[string]float64, min(defaultMaxTotalSeries, defaultMaxBatchSize))
 	flush := func() {
 		if len(batch) == 0 {
 			return
 		}
-		c.flush(batch)
+		c.flush(batch, &retryQueue)
 		for i := range batch {
 			releaseEvent(batch[i])
 			batch[i] = nil
@@ -299,6 +317,7 @@ func (c *Client) run(ctx context.Context) {
 		select {
 		case <-ticker.C:
 			flush()
+			c.flushRetryQueue(&retryQueue)
 		case ev := <-c.queue:
 			if ev == nil {
 				continue
@@ -332,6 +351,10 @@ func (c *Client) run(ctx context.Context) {
 					}
 				default:
 					flush()
+					// Close() should only resend retries whose backoff already elapsed.
+					// Future retries are left unsent rather than collapsing the delay
+					// budget into an immediate resend loop during shutdown.
+					c.flushRetryQueue(&retryQueue)
 					return
 				}
 			}
@@ -367,28 +390,61 @@ func (c *Client) applyTotal(ev *event, totals map[string]float64, limit int) boo
 	return true
 }
 
-func (c *Client) flush(events []*event) {
+func (c *Client) flush(events []*event, retryQueue *[]retryBatch) {
 	if c.stopSending.Load() {
 		return
 	}
+	payload := c.buildPayload(events)
+	if payload == nil {
+		return
+	}
+	c.sendPayload(payload, 1, retryQueue, false)
+}
+
+func (c *Client) buildPayload(events []*event) *Payload {
 	builder := newBatchBuilder(len(events))
 	for _, ev := range events {
 		builder.add(ev)
 	}
 	payload := builder.build()
 	if payload == nil {
+		return nil
+	}
+	if payload.BatchID == "" {
+		// Retries must reuse the original batch identity so a supporting ingester
+		// can safely deduplicate ambiguous replays.
+		payload.BatchID = c.nextBatchID()
+	}
+	return payload
+}
+
+func (c *Client) nextBatchID() string {
+	seq := c.batchSeq.Add(1)
+	return c.batchSession + "-" + strconv.FormatUint(seq, 36)
+}
+
+func (c *Client) sendPayload(payload *Payload, attempt int, retryQueue *[]retryBatch, fromRetry bool) {
+	if payload == nil || payload.empty() || c.stopSending.Load() {
 		return
 	}
-	if c.cfg.Verbose {
+	if payload.BatchID == "" {
+		payload.BatchID = c.nextBatchID()
+	}
+	if c.cfg.Verbose && !fromRetry {
 		c.logFlushSummary(payload)
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), defaultFlushTimeout)
 	defer cancel()
+
 	if err := c.cfg.Transport.Send(ctx, payload); err != nil {
 		if IsStopIngestError(err) {
 			if c.stopSending.CompareAndSwap(false, true) && c.logger != nil {
 				c.logger.Printf("statok: ingest disabled after non-retryable transport response: %v", err)
 			}
+			return
+		}
+		if c.shouldRetryTransport(err) && c.enqueueRetry(retryQueue, payload, attempt, err) {
 			return
 		}
 		if c.logger != nil {
@@ -397,9 +453,116 @@ func (c *Client) flush(events []*event) {
 	}
 }
 
+func (c *Client) enqueueRetry(retryQueue *[]retryBatch, payload *Payload, attempt int, err error) bool {
+	if retryQueue == nil || payload == nil {
+		return false
+	}
+	if attempt >= defaultRetryMaxAttempts {
+		if c.logger != nil {
+			c.logger.Printf(
+				"statok: retry budget exhausted for batchId=%s attempts=%d; %s",
+				payload.BatchID,
+				attempt,
+				c.flushFailureDetails(payload, err),
+			)
+		}
+		return false
+	}
+	if len(*retryQueue) >= defaultRetryQueueSize {
+		if c.logger != nil {
+			c.logger.Printf(
+				"statok: retry queue full, dropping batchId=%s pending=%d; %s",
+				payload.BatchID,
+				len(*retryQueue),
+				c.flushFailureDetails(payload, err),
+			)
+		}
+		return false
+	}
+	delay := retryDelay(attempt)
+	// Retain the already-built payload rather than rebuilding from pooled events;
+	// the payload is immutable from this point onward.
+	*retryQueue = append(*retryQueue, retryBatch{
+		payload:     payload,
+		attempts:    attempt,
+		nextAttempt: time.Now().Add(delay),
+	})
+	if c.logger != nil {
+		c.logger.Printf(
+			"statok: queued retry for batchId=%s nextAttempt=%d/%d delay=%s; %s",
+			payload.BatchID,
+			attempt+1,
+			defaultRetryMaxAttempts,
+			delay,
+			c.flushFailureDetails(payload, err),
+		)
+	}
+	return true
+}
+
+func (c *Client) flushRetryQueue(retryQueue *[]retryBatch) {
+	if retryQueue == nil || len(*retryQueue) == 0 || c.stopSending.Load() {
+		return
+	}
+	now := time.Now()
+	for i := 0; i < len(*retryQueue); {
+		item := (*retryQueue)[i]
+		if item.nextAttempt.After(now) {
+			i++
+			continue
+		}
+		// Remove before sending so a failed resend can append a fresh retry entry
+		// at the tail without corrupting iteration.
+		copy((*retryQueue)[i:], (*retryQueue)[i+1:])
+		*retryQueue = (*retryQueue)[:len(*retryQueue)-1]
+		c.sendPayload(item.payload, item.attempts+1, retryQueue, true)
+		now = time.Now()
+	}
+}
+
+func retryDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := defaultRetryBaseDelay
+	for step := 1; step < attempt && delay < defaultRetryMaxDelay; step++ {
+		delay *= 2
+		if delay >= defaultRetryMaxDelay {
+			delay = defaultRetryMaxDelay
+			break
+		}
+	}
+	const jitterWindow = 250 * time.Millisecond
+	if jitterWindow > 0 {
+		delay += time.Duration(time.Now().UnixNano() % int64(jitterWindow))
+	}
+	return delay
+}
+
+func (c *Client) shouldRetryTransport(err error) bool {
+	if err == nil || IsStopIngestError(err) {
+		return false
+	}
+	var transportErr *HTTPTransportError
+	if errors.As(err, &transportErr) && transportErr != nil {
+		switch transportErr.StatusCode {
+		case http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			return true
+		default:
+			return false
+		}
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	return errors.Is(err, context.DeadlineExceeded)
+}
+
 func (c *Client) flushFailureDetails(payload *Payload, err error) string {
 	stats := summarizePayload(payload)
 	fields := []string{
+		"batchId=" + payload.BatchID,
 		"events=" + strconv.Itoa(stats.totalEvents),
 		"counters=" + strconv.Itoa(stats.counters),
 		"values=" + strconv.Itoa(stats.values),

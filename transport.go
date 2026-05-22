@@ -22,6 +22,7 @@ type Transport interface {
 
 // Payload is the serialized form of a flushed batch.
 type Payload struct {
+	BatchID  string
 	Counters []CounterEvent
 	Values   []ValueEvent
 	Uniques  []UniqueEvent
@@ -98,6 +99,7 @@ type StopIngestError struct {
 type HTTPTransportError struct {
 	Method                       string
 	Endpoint                     string
+	BatchID                      string
 	StatusCode                   int
 	Status                       string
 	ResponseCode                 string
@@ -218,7 +220,7 @@ func (t *HTTPTransport) send(ctx context.Context, payload *Payload, workload str
 	if len(body) == 0 {
 		return nil
 	}
-	result, err := t.sendBody(ctx, body, workload)
+	result, err := t.sendBody(ctx, body, workload, payload.BatchID)
 	if err == nil {
 		return nil
 	}
@@ -236,7 +238,7 @@ func (t *HTTPTransport) send(ctx context.Context, payload *Payload, workload str
 		if len(resyncBody) == 0 {
 			return err
 		}
-		retryResult, retryErr := t.sendBody(ctx, resyncBody, workload)
+		retryResult, retryErr := t.sendBody(ctx, resyncBody, workload, payload.BatchID)
 		if retryResult.statusCode == http.StatusRequestEntityTooLarge {
 			t.resetDictionaryLocked()
 		}
@@ -258,9 +260,12 @@ func (t *HTTPTransport) resetDictionaryLocked() {
 type sendResult struct {
 	statusCode   int
 	responseCode string
+	accepted     int
+	dropped      int
+	rejected     int
 }
 
-func (t *HTTPTransport) sendBody(ctx context.Context, body []byte, workload string) (sendResult, error) {
+func (t *HTTPTransport) sendBody(ctx context.Context, body []byte, workload string, batchID string) (sendResult, error) {
 	result := sendResult{}
 
 	client := t.Client
@@ -284,6 +289,9 @@ func (t *HTTPTransport) sendBody(ctx context.Context, body []byte, workload stri
 	if workload = strings.TrimSpace(workload); workload != "" {
 		req.Header.Set(workloadHeaderName, workload)
 	}
+	if batchID = strings.TrimSpace(batchID); batchID != "" {
+		req.Header.Set(batchIDHeaderName, batchID)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -292,8 +300,24 @@ func (t *HTTPTransport) sendBody(ctx context.Context, body []byte, workload stri
 	defer resp.Body.Close()
 
 	result.statusCode = resp.StatusCode
+	result.accepted = parseIngestCountHeader(resp.Header.Get("X-Statok-Accepted"))
+	result.dropped = parseIngestCountHeader(resp.Header.Get("X-Statok-Dropped"))
+	result.rejected = parseIngestCountHeader(resp.Header.Get("X-Statok-Rejected"))
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		io.Copy(io.Discard, resp.Body)
+		// The server may accept part of a batch and drop/reject the rest while
+		// still returning 2xx. We do not retry here because replaying the whole
+		// batch would duplicate the accepted events.
+		if t.Logger != nil && (result.dropped > 0 || result.rejected > 0) {
+			t.Logger.Printf(
+				"statok: ingest accepted partial batch batchId=%s accepted=%d dropped=%d rejected=%d endpoint=%s",
+				batchID,
+				maxHeaderValue(result.accepted),
+				maxHeaderValue(result.dropped),
+				maxHeaderValue(result.rejected),
+				urlStr,
+			)
+		}
 		return result, nil
 	}
 
@@ -303,13 +327,14 @@ func (t *HTTPTransport) sendBody(ctx context.Context, body []byte, workload stri
 	sendErr := &HTTPTransportError{
 		Method:                       http.MethodPost,
 		Endpoint:                     urlStr,
+		BatchID:                      batchID,
 		StatusCode:                   resp.StatusCode,
 		Status:                       resp.Status,
 		ResponseCode:                 responseCode,
 		Detail:                       detail,
-		Accepted:                     parseIngestCountHeader(resp.Header.Get("X-Statok-Accepted")),
-		Dropped:                      parseIngestCountHeader(resp.Header.Get("X-Statok-Dropped")),
-		Rejected:                     parseIngestCountHeader(resp.Header.Get("X-Statok-Rejected")),
+		Accepted:                     result.accepted,
+		Dropped:                      result.dropped,
+		Rejected:                     result.rejected,
 		RequestBytes:                 len(body),
 		DictionarySession:            diag.dictionarySession,
 		DictionaryRevision:           diag.dictionaryRevision,
@@ -479,6 +504,9 @@ func summarizeTransportError(err error) string {
 	fields := []string{
 		"endpoint=" + transportErr.Endpoint,
 		"status=" + strconv.Itoa(transportErr.StatusCode),
+	}
+	if transportErr.BatchID != "" {
+		fields = append(fields, "batchId="+transportErr.BatchID)
 	}
 	if transportErr.DictionarySession != "" {
 		fields = append(fields, "dictSession="+transportErr.DictionarySession)

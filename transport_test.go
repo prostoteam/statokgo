@@ -141,10 +141,12 @@ func TestHTTPTransportSendSetsAuthorizationHeader(t *testing.T) {
 	var gotAuthorization string
 	var gotWorkload string
 	var gotCustomHeader string
+	var gotBatchID string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuthorization = r.Header.Get("Authorization")
 		gotWorkload = r.Header.Get(workloadHeaderName)
 		gotCustomHeader = r.Header.Get("X-Custom")
+		gotBatchID = r.Header.Get(batchIDHeaderName)
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer srv.Close()
@@ -158,6 +160,7 @@ func TestHTTPTransportSendSetsAuthorizationHeader(t *testing.T) {
 		},
 	}
 	payload := &Payload{
+		BatchID: "batch-123",
 		Counters: []CounterEvent{{
 			Metric:    "counter_metric_1",
 			Value:     1,
@@ -176,6 +179,9 @@ func TestHTTPTransportSendSetsAuthorizationHeader(t *testing.T) {
 	}
 	if gotCustomHeader != "1" {
 		t.Fatalf("X-Custom = %q, want %q", gotCustomHeader, "1")
+	}
+	if gotBatchID != "batch-123" {
+		t.Fatalf("%s = %q, want %q", batchIDHeaderName, gotBatchID, "batch-123")
 	}
 }
 

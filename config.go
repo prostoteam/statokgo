@@ -15,9 +15,14 @@ const (
 	defaultMaxTotalSeries      = defaultMaxSeriesPerBatch
 	defaultFlushInterval       = 500 * time.Millisecond
 	defaultFlushTimeout        = 5 * time.Second
+	defaultRetryQueueSize      = 128
+	defaultRetryMaxAttempts    = 3
+	defaultRetryBaseDelay      = time.Second
+	defaultRetryMaxDelay       = 8 * time.Second
 	defaultEndpointHost        = "statok.dev0101.xyz"
 	defaultIngestPath          = "/api/i/batch"
 	defaultStopStatusCode      = 401
+	batchIDHeaderName          = "X-Statok-Batch-Id"
 	workloadHeaderName         = "X-Statok-Workload"
 	workloadMaxLen             = 100
 )

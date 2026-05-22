@@ -63,6 +63,10 @@ without parsing or rewriting it.
   internally to keep memory bounded without exposing tuning knobs.
 - **Background flushing**: A worker goroutine batches events and flushes on size or time. Network I/O never runs in the
   caller goroutine.
+- **Bounded retries**: Transient network failures and HTTP overload/server errors are retried in the background with a
+  small internal retry queue and exponential backoff.
+- **Batch idempotency**: Each flushed batch carries an internal `X-Statok-Batch-Id` header so supported ingesters can
+  deduplicate safe retransmits.
 - **Safe labels**: Label slices are copied so caller mutations cannot affect in-flight batches.
 - **Errors are isolated**: Transport errors are logged (via `Logger`) but never returned to the caller; the worker keeps
   running.
@@ -128,5 +132,7 @@ Hostmetrics integrations can add system-adjacent metrics when enabled:
   unbounded memory.
 - `Total` baselines are stored up to an internal cap; additional series are dropped silently.
 - Network errors never surface to callers; they are logged and the worker continues with the next flush window.
+- Retry memory is bounded internally; when the retry queue is full or the retry budget is exhausted, the failed batch is
+  dropped and only logged.
 - HTTP `401` and API response code `unauthorized` are treated as non-retryable; after one such response, the client
   drops new events until reinitialized with updated config/credentials.

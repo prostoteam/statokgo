@@ -1,12 +1,25 @@
 package statok
 
-import "strings"
+import (
+	"hash/maphash"
+	"strings"
+)
 
 type batchBuilder struct {
-	payload     Payload
-	counterAggs map[string]*CounterEvent
-	uniqueSeen  map[string]struct{}
+	payload        Payload
+	counterAggs    map[uint64]int
+	counterEntries []counterAggEntry
+	uniqueSeen     map[string]struct{}
 }
+
+type counterAggEntry struct {
+	metric       string
+	labels       []string
+	payloadIndex int
+	next         int
+}
+
+var seriesHashSeed = maphash.MakeSeed()
 
 func newBatchBuilder(capacity int) *batchBuilder {
 	b := &batchBuilder{}
@@ -15,7 +28,9 @@ func newBatchBuilder(capacity int) *batchBuilder {
 		b.payload.Values = make([]ValueEvent, 0, capacity)
 		b.payload.Uniques = make([]UniqueEvent, 0, capacity)
 	}
-	b.counterAggs = make(map[string]*CounterEvent, min(capacity, defaultMaxSeriesPerBatch))
+	aggCapacity := min(capacity, defaultMaxSeriesPerBatch)
+	b.counterAggs = make(map[uint64]int, aggCapacity)
+	b.counterEntries = make([]counterAggEntry, 0, aggCapacity)
 	b.uniqueSeen = make(map[string]struct{}, min(capacity, defaultMaxSeriesPerBatch))
 	return b
 }
@@ -37,15 +52,22 @@ func (b *batchBuilder) add(e *event) {
 }
 
 func (b *batchBuilder) addCounter(e *event) {
-	key := seriesKey(e.name, e.labels)
-	if agg, ok := b.counterAggs[key]; ok {
-		agg.Value += e.value
-		if ts := e.ts.Unix(); ts > agg.Timestamp {
-			agg.Timestamp = ts
+	hash := seriesHash(e.name, e.labels)
+	if head := b.counterAggs[hash]; head != 0 {
+		for idx := head - 1; idx >= 0; idx = b.counterEntries[idx].next - 1 {
+			entry := b.counterEntries[idx]
+			if entry.metric != e.name || !labelsEqual(entry.labels, e.labels) {
+				continue
+			}
+			agg := &b.payload.Counters[entry.payloadIndex]
+			agg.Value += e.value
+			if ts := e.ts.Unix(); ts > agg.Timestamp {
+				agg.Timestamp = ts
+			}
+			return
 		}
-		return
 	}
-	if len(b.counterAggs) >= defaultMaxSeriesPerBatch {
+	if len(b.counterEntries) >= defaultMaxSeriesPerBatch {
 		b.payload.Counters = append(b.payload.Counters, CounterEvent{
 			Metric:    e.name,
 			Value:     e.value,
@@ -54,13 +76,20 @@ func (b *batchBuilder) addCounter(e *event) {
 		})
 		return
 	}
-	agg := &CounterEvent{
+	payloadIndex := len(b.payload.Counters)
+	b.payload.Counters = append(b.payload.Counters, CounterEvent{
 		Metric:    e.name,
 		Value:     e.value,
 		Labels:    cloneLabels(e.labels),
 		Timestamp: e.ts.Unix(),
-	}
-	b.counterAggs[key] = agg
+	})
+	b.counterEntries = append(b.counterEntries, counterAggEntry{
+		metric:       e.name,
+		labels:       b.payload.Counters[payloadIndex].Labels,
+		payloadIndex: payloadIndex,
+		next:         b.counterAggs[hash],
+	})
+	b.counterAggs[hash] = len(b.counterEntries)
 }
 
 func (b *batchBuilder) addUnique(e *event) {
@@ -81,15 +110,34 @@ func (b *batchBuilder) addUnique(e *event) {
 }
 
 func (b *batchBuilder) build() *Payload {
-	if len(b.counterAggs) > 0 {
-		for _, agg := range b.counterAggs {
-			b.payload.Counters = append(b.payload.Counters, *agg)
-		}
-	}
 	if b.payload.empty() {
 		return nil
 	}
 	return &b.payload
+}
+
+func seriesHash(metric string, labels []string) uint64 {
+	var h maphash.Hash
+	h.SetSeed(seriesHashSeed)
+	_, _ = h.WriteString(metric)
+	_ = h.WriteByte(0)
+	for _, l := range labels {
+		_, _ = h.WriteString(l)
+		_ = h.WriteByte(0)
+	}
+	return h.Sum64()
+}
+
+func labelsEqual(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func seriesKey(metric string, labels []string) string {
