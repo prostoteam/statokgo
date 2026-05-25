@@ -128,7 +128,7 @@ func encodeLinePayloadV4(p *Payload, state *dictionaryState, forceDefinitions bo
 		case 'c':
 			buf.WriteString(strconv.FormatInt(ev.intValue, 10))
 		case 'v':
-			buf.WriteString(strconv.FormatFloat(ev.floatValue, 'f', 2, 64))
+			buf.WriteString(strconv.FormatFloat(ev.floatValue, 'f', -1, 64))
 		case 'u':
 			buf.WriteString(ev.uniqueID)
 		}
