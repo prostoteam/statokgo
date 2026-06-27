@@ -3,6 +3,7 @@ package statok
 import (
 	"context"
 	"errors"
+	"io"
 	"math"
 	"net"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -21,6 +23,7 @@ var (
 	ErrMissingAPIKey               = errors.New("statok: API key is required for HTTP transport")
 	ErrInvalidAPIKey               = errors.New("statok: invalid API key")
 	ErrAPIKeyAuthorizationConflict = errors.New("statok: API key conflicts with custom Authorization header")
+	errClientBackoffActive         = errors.New("statok: transient ingest backoff active")
 )
 
 const (
@@ -41,6 +44,9 @@ type Client struct {
 	once         sync.Once
 	workload     string
 	batchSession string
+
+	transientBackoffAttempt int
+	nextSendAttempt         time.Time
 }
 
 // NewClient builds a client with the provided workload and configuration and starts
@@ -317,7 +323,7 @@ func (c *Client) run(ctx context.Context) {
 		select {
 		case <-ticker.C:
 			flush()
-			c.flushRetryQueue(&retryQueue)
+			c.flushRetryQueue(&retryQueue, false)
 		case ev := <-c.queue:
 			if ev == nil {
 				continue
@@ -351,10 +357,7 @@ func (c *Client) run(ctx context.Context) {
 					}
 				default:
 					flush()
-					// Close() should only resend retries whose backoff already elapsed.
-					// Future retries are left unsent rather than collapsing the delay
-					// budget into an immediate resend loop during shutdown.
-					c.flushRetryQueue(&retryQueue)
+					c.flushRetryQueue(&retryQueue, true)
 					return
 				}
 			}
@@ -433,6 +436,9 @@ func (c *Client) sendPayload(payload *Payload, attempt int, retryQueue *[]retryB
 	if c.cfg.Verbose && !fromRetry {
 		c.logFlushSummary(payload)
 	}
+	if c.deferForClientBackoff(payload, attempt, retryQueue) {
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), defaultFlushTimeout)
 	defer cancel()
@@ -444,25 +450,63 @@ func (c *Client) sendPayload(payload *Payload, attempt int, retryQueue *[]retryB
 			}
 			return
 		}
-		if c.shouldRetryTransport(err) && c.enqueueRetry(retryQueue, payload, attempt, err) {
-			return
+		if c.shouldRetryTransport(err) {
+			c.noteTransientFailure()
+			if c.enqueueRetry(retryQueue, payload, attempt, err) {
+				return
+			}
 		}
 		if c.logger != nil {
 			c.logger.Printf("statok: flush failed: %v; %s", err, c.flushFailureDetails(payload, err))
 		}
+		return
 	}
+
+	c.resetTransientBackoff()
+}
+
+func (c *Client) deferForClientBackoff(payload *Payload, attempt int, retryQueue *[]retryBatch) bool {
+	if c == nil || c.nextSendAttempt.IsZero() || !time.Now().Before(c.nextSendAttempt) {
+		return false
+	}
+	lastAttempt := attempt - 1
+	if lastAttempt < 0 {
+		lastAttempt = 0
+	}
+	c.enqueueRetryAt(retryQueue, payload, lastAttempt, c.nextSendAttempt, errClientBackoffActive)
+	return true
+}
+
+func (c *Client) noteTransientFailure() {
+	if c == nil {
+		return
+	}
+	c.transientBackoffAttempt++
+	c.nextSendAttempt = time.Now().Add(clientBackoffDelay(c.transientBackoffAttempt))
+}
+
+func (c *Client) resetTransientBackoff() {
+	if c == nil {
+		return
+	}
+	c.transientBackoffAttempt = 0
+	c.nextSendAttempt = time.Time{}
 }
 
 func (c *Client) enqueueRetry(retryQueue *[]retryBatch, payload *Payload, attempt int, err error) bool {
+	return c.enqueueRetryAt(retryQueue, payload, attempt, time.Now().Add(retryDelay(attempt)), err)
+}
+
+func (c *Client) enqueueRetryAt(retryQueue *[]retryBatch, payload *Payload, attempts int, nextAttempt time.Time, err error) bool {
 	if retryQueue == nil || payload == nil {
 		return false
 	}
-	if attempt >= defaultRetryMaxAttempts {
+	if attempts >= defaultRetryMaxAttempts {
 		if c.logger != nil {
 			c.logger.Printf(
 				"statok: retry budget exhausted for batchId=%s attempts=%d; %s",
 				payload.BatchID,
-				attempt,
+				attempts,
 				c.flushFailureDetails(payload, err),
 			)
 		}
@@ -479,35 +523,39 @@ func (c *Client) enqueueRetry(retryQueue *[]retryBatch, payload *Payload, attemp
 		}
 		return false
 	}
-	delay := retryDelay(attempt)
 	// Retain the already-built payload rather than rebuilding from pooled events;
 	// the payload is immutable from this point onward.
 	*retryQueue = append(*retryQueue, retryBatch{
 		payload:     payload,
-		attempts:    attempt,
-		nextAttempt: time.Now().Add(delay),
+		attempts:    attempts,
+		nextAttempt: nextAttempt,
 	})
 	if c.logger != nil {
 		c.logger.Printf(
 			"statok: queued retry for batchId=%s nextAttempt=%d/%d delay=%s; %s",
 			payload.BatchID,
-			attempt+1,
+			attempts+1,
 			defaultRetryMaxAttempts,
-			delay,
+			time.Until(nextAttempt).Round(time.Millisecond),
 			c.flushFailureDetails(payload, err),
 		)
 	}
 	return true
 }
 
-func (c *Client) flushRetryQueue(retryQueue *[]retryBatch) {
+func (c *Client) flushRetryQueue(retryQueue *[]retryBatch, ignoreBackoff bool) {
 	if retryQueue == nil || len(*retryQueue) == 0 || c.stopSending.Load() {
 		return
 	}
 	now := time.Now()
-	for i := 0; i < len(*retryQueue); {
+	processed := 0
+	processLimit := len(*retryQueue)
+	if defaultRetryFlushMaxSends > 0 && processLimit > defaultRetryFlushMaxSends {
+		processLimit = defaultRetryFlushMaxSends
+	}
+	for i := 0; i < len(*retryQueue) && processed < processLimit; {
 		item := (*retryQueue)[i]
-		if item.nextAttempt.After(now) {
+		if !ignoreBackoff && item.nextAttempt.After(now) {
 			i++
 			continue
 		}
@@ -516,6 +564,7 @@ func (c *Client) flushRetryQueue(retryQueue *[]retryBatch) {
 		copy((*retryQueue)[i:], (*retryQueue)[i+1:])
 		*retryQueue = (*retryQueue)[:len(*retryQueue)-1]
 		c.sendPayload(item.payload, item.attempts+1, retryQueue, true)
+		processed++
 		now = time.Now()
 	}
 }
@@ -532,9 +581,26 @@ func retryDelay(attempt int) time.Duration {
 			break
 		}
 	}
-	const jitterWindow = 250 * time.Millisecond
-	if jitterWindow > 0 {
-		delay += time.Duration(time.Now().UnixNano() % int64(jitterWindow))
+	if defaultRetryJitterWindow > 0 {
+		delay += time.Duration(time.Now().UnixNano() % int64(defaultRetryJitterWindow))
+	}
+	return delay
+}
+
+func clientBackoffDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := defaultRetryBaseDelay
+	for step := 1; step < attempt && delay < defaultClientBackoffMaxDelay; step++ {
+		delay *= 2
+		if delay >= defaultClientBackoffMaxDelay {
+			delay = defaultClientBackoffMaxDelay
+			break
+		}
+	}
+	if defaultClientBackoffJitterWindow > 0 {
+		delay += time.Duration(time.Now().UnixNano() % int64(defaultClientBackoffJitterWindow))
 	}
 	return delay
 }
@@ -556,7 +622,12 @@ func (c *Client) shouldRetryTransport(err error) bool {
 	if errors.As(err, &netErr) {
 		return true
 	}
-	return errors.Is(err, context.DeadlineExceeded)
+	return errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ETIMEDOUT)
 }
 
 func (c *Client) flushFailureDetails(payload *Payload, err error) string {

@@ -63,8 +63,10 @@ without parsing or rewriting it.
   internally to keep memory bounded without exposing tuning knobs.
 - **Background flushing**: A worker goroutine batches events and flushes on size or time. Network I/O never runs in the
   caller goroutine.
-- **Bounded retries**: Transient network failures and HTTP overload/server errors are retried in the background with a
-  small internal retry queue and exponential backoff.
+- **Bounded retries with client-wide backoff**: Transient network failures, connection reset/refused/EOF errors during
+  restarts, and HTTP overload/server errors are retried in the background with a small internal retry queue,
+  exponential backoff, a shared client backoff gate so long outages do not keep sending every flush interval, and a
+  capped retry drain so recovery does not replay the whole queue at once.
 - **Batch idempotency**: Each flushed batch carries an internal `X-Statok-Batch-Id` header so supported ingesters can
   deduplicate safe retransmits.
 - **Safe labels**: Label slices are copied so caller mutations cannot affect in-flight batches.
@@ -109,8 +111,9 @@ Hostmetrics integrations can add system-adjacent metrics when enabled:
 - Create a client with `statok.NewClient(workload, cfg)` or set the package-level default with
   `statok.Init(workload, cfg)` and then call
   `statok.Count/CountUnique/Value` helpers.
-- Call `client.Close(ctx)` during shutdown to flush the queue. `Close` waits for worker shutdown and final flush
-  attempts, and returns early if `ctx` is canceled or reaches deadline.
+- Call `client.Close(ctx)` during shutdown to flush the queue. `Close` waits for worker shutdown, flushes pending
+  batches, makes a final bounded attempt for retry batches even if their backoff has not elapsed yet, and returns early
+  if `ctx` is canceled or reaches deadline.
 - Inspect `client.Dropped()` to see how many events were rejected because the queue was full (not exposed to callers
   otherwise).
 

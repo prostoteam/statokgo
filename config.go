@@ -8,23 +8,27 @@ import (
 )
 
 const (
-	defaultQueueSize           = 64 * 1024
-	defaultMaxBatchSize        = 512
-	defaultMaxSeriesPerBatch   = 2048
-	defaultMaxDictionarySeries = defaultMaxSeriesPerBatch
-	defaultMaxTotalSeries      = defaultMaxSeriesPerBatch
-	defaultFlushInterval       = 500 * time.Millisecond
-	defaultFlushTimeout        = 5 * time.Second
-	defaultRetryQueueSize      = 128
-	defaultRetryMaxAttempts    = 3
-	defaultRetryBaseDelay      = time.Second
-	defaultRetryMaxDelay       = 8 * time.Second
-	defaultEndpointHost        = "statok.dev0101.xyz"
-	defaultIngestPath          = "/api/i/batch"
-	defaultStopStatusCode      = 401
-	batchIDHeaderName          = "X-Statok-Batch-Id"
-	workloadHeaderName         = "X-Statok-Workload"
-	workloadMaxLen             = 100
+	defaultQueueSize                 = 64 * 1024
+	defaultMaxBatchSize              = 512
+	defaultMaxSeriesPerBatch         = 2048
+	defaultMaxDictionarySeries       = defaultMaxSeriesPerBatch
+	defaultMaxTotalSeries            = defaultMaxSeriesPerBatch
+	defaultFlushInterval             = 500 * time.Millisecond
+	defaultFlushTimeout              = 5 * time.Second
+	defaultRetryQueueSize            = 128
+	defaultRetryFlushMaxSends        = 1
+	defaultRetryMaxAttempts          = 8
+	defaultRetryBaseDelay            = time.Second
+	defaultRetryMaxDelay             = 8 * time.Second
+	defaultRetryJitterWindow         = time.Second
+	defaultClientBackoffMaxDelay     = 30 * time.Second
+	defaultClientBackoffJitterWindow = 5 * time.Second
+	defaultEndpointHost              = "statok.dev0101.xyz"
+	defaultIngestPath                = "/api/i/batch"
+	defaultStopStatusCode            = 401
+	batchIDHeaderName                = "X-Statok-Batch-Id"
+	workloadHeaderName               = "X-Statok-Workload"
+	workloadMaxLen                   = 100
 )
 
 var defaultStopResponseCodes = [...]string{
