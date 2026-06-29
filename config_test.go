@@ -12,8 +12,8 @@ func TestEndpointFromHost(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"statok.dev0101.xyz", "https://statok.dev0101.xyz/api/i/batch"},
-		{"https://statok.dev0101.xyz", "https://statok.dev0101.xyz/api/i/batch"},
+		{"prostometrics.ru", "https://prostometrics.ru/api/i/batch"},
+		{"https://prostometrics.ru", "https://prostometrics.ru/api/i/batch"},
 		{"http://localhost:8085", "http://localhost:8085/api/i/batch"},
 		{"https://collector.example.com/api/i/batch", "https://collector.example.com/api/i/batch"},
 	}

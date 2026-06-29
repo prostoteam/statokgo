@@ -19,7 +19,7 @@ import (
 	"github.com/prostoteam/statokgo/internal/collectors/nginx"
 )
 
-const statokIngestHost = "statok.dev0101.xyz"
+const statokIngestHost = "prostometrics.ru"
 
 type stringFlag struct {
 	value string

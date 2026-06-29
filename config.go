@@ -23,7 +23,7 @@ const (
 	defaultRetryJitterWindow         = time.Second
 	defaultClientBackoffMaxDelay     = 30 * time.Second
 	defaultClientBackoffJitterWindow = 5 * time.Second
-	defaultEndpointHost              = "statok.dev0101.xyz"
+	defaultEndpointHost              = "prostometrics.ru"
 	defaultIngestPath                = "/api/i/batch"
 	defaultStopStatusCode            = 401
 	batchIDHeaderName                = "X-Statok-Batch-Id"

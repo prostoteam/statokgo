@@ -51,7 +51,7 @@ Use `statok.Count` for counter deltas, `statok.CountUnique` for unique occurrenc
 strings or via `statok.Label(k, v)` which sanitizes `=`, `|`, `\n`, and `\r`.
 
 If `Endpoint` is empty and `Transport` is nil, the client defaults to the public ingest host
-`https://statok.dev0101.xyz/api/i/batch`. For HTTP transport, `APIKey` is required and should be the
+`https://prostometrics.ru/api/i/batch`. For HTTP transport, `APIKey` is required and should be the
 Statok-generated ingest API key copied exactly as provided. The client sends it as the `Authorization` header value
 without parsing or rewriting it.
 
@@ -82,7 +82,7 @@ Workload is supplied separately to `Init`/`NewClient` and is sent as the require
 
 | Field       | Default                                  | Purpose                                                                                                                          |
 |-------------|------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------|
-| `Endpoint`  | `https://statok.dev0101.xyz/api/i/batch` | Ingest URL. When set and `Transport` is nil, an `HTTPTransport` is created and `/api/i/batch` is appended if no path is present. |
+| `Endpoint`  | `https://prostometrics.ru/api/i/batch` | Ingest URL. When set and `Transport` is nil, an `HTTPTransport` is created and `/api/i/batch` is appended if no path is present. |
 | `APIKey`    | `""`                                     | Statok-generated ingest API key for HTTP transport. Required when using `HTTPTransport`; sent exactly as provided.              |
 | `Transport` | nil                                      | Any implementation of `Transport` (HTTP is provided). Must be safe for concurrent use.                                           |
 | `Logger`    | `log.Default()`                          | Receives internal errors and send summaries. Provide your own or silence by using a logger that discards output.                 |

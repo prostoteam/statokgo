@@ -19,7 +19,7 @@
 #   SYSTEMD_SCOPE=system|user
 #   AGENT_ENV_FILE=/etc/statok/agent.env
 #   STATOK_API_KEY=123_xxx
-#   STATOK_HOST_DEFAULT=statok.dev0101.xyz
+#   STATOK_HOST_DEFAULT=prostometrics.ru
 #   STATOK_VERSION=latest
 #   GOFLAGS="-buildvcs=false"
 
@@ -33,7 +33,7 @@ SYSTEMD_SCOPE="${SYSTEMD_SCOPE:-}"
 AGENT_ENV_FILE="${AGENT_ENV_FILE:-}"
 STATOK_API_KEY="${STATOK_API_KEY:-}"
 
-STATOK_HOST_DEFAULT="${STATOK_HOST_DEFAULT:-statok.dev0101.xyz}"
+STATOK_HOST_DEFAULT="${STATOK_HOST_DEFAULT:-prostometrics.ru}"
 
 # Build defaults
 GO_MIN_VERSION="${GO_MIN_VERSION:-1.21.0}"

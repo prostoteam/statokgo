@@ -1,7 +1,7 @@
 package statok
 
 // VersionString is the human-readable client version. Update this manually.
-const VersionString = "20260627-0002"
+const VersionString = "20260629-0001"
 
 // Version returns the client version string.
 func Version() string {

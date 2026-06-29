@@ -1,6 +1,6 @@
 # Deploying statok-agent on Ubuntu
 
-Use the installer to set up a systemd service that starts on boot. Default endpoint is `https://statok.dev0101.xyz`
+Use the installer to set up a systemd service that starts on boot. Default endpoint is `https://prostometrics.ru`
 (override with `STATOK_ENDPOINT=...` or `STATOK_HOST=...`).
 
 ## One-line installer (system service)
@@ -63,7 +63,7 @@ Defaults:
 Override via env vars if needed:
 
 ```bash
-SERVICE_NAME=statok-agent STATOK_HOST_DEFAULT=statok.dev0101.xyz ./install_agent.sh
+SERVICE_NAME=statok-agent STATOK_HOST_DEFAULT=prostometrics.ru ./install_agent.sh
 ```
 
 If `SERVICE_NAME` is customized, use that name in `systemctl`/`journalctl` commands instead of `statok-agent`.
