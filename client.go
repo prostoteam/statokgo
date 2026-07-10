@@ -39,6 +39,7 @@ type Client struct {
 	done         chan struct{}
 	batchSeq     atomic.Uint64
 	dropped      atomic.Uint64
+	valueLimiter valueRateLimiter
 	stopSending  atomic.Bool
 	logger       Logger
 	once         sync.Once
@@ -184,18 +185,29 @@ func (c *Client) Total(metric string, total float64, labels ...string) {
 
 // Value records a measurement sample.
 func (c *Client) Value(metric string, value float64, labels ...string) {
+	if !c.allowValue(metric) {
+		return
+	}
 	c.enqueue(metricTypeValue, metric, value, labels)
 }
 
 // ValueSparse records a sparse gauge sample (last value should carry forward).
 func (c *Client) ValueSparse(metric string, value float64, labels ...string) {
-	if metric == "" {
+	if !c.allowValue(metric) {
 		return
 	}
 	metaLabels := make([]string, 0, len(labels)+2)
 	metaLabels = append(metaLabels, labels...)
 	metaLabels = append(metaLabels, Label(metaLabelFillMode, metaFillModeCarry))
 	c.enqueue(metricTypeValue, metric, value, metaLabels)
+}
+
+// allowValue limits raw samples before ValueSparse allocates its fill-mode label.
+func (c *Client) allowValue(metric string) bool {
+	if metric == "" || c.workload == "" || c.stopSending.Load() {
+		return false
+	}
+	return c.valueLimiter.allow()
 }
 
 func (c *Client) enqueue(typ metricType, metric string, value float64, labels []string) {

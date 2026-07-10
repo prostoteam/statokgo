@@ -59,6 +59,8 @@ without parsing or rewriting it.
 
 - **Non-blocking hot path**: Count/CountUnique/Total/Value never block or panic. When the bounded queue is full, the event is
   dropped.
+- **Value rate limit**: Each client forwards at most 20,000 Value/ValueSparse samples per wall-clock second. Later value
+  samples in that second are silently ignored before queueing; counters and unique events are unaffected.
 - **Bounded resources**: Queue size, batch size, max aggregated series per batch, and total-series cache are fixed
   internally to keep memory bounded without exposing tuning knobs.
 - **Background flushing**: A worker goroutine batches events and flushes on size or time. Network I/O never runs in the
@@ -89,7 +91,8 @@ Workload is supplied separately to `Init`/`NewClient` and is sent as the require
 | `Verbose`   | `false`                                  | When true, logs the client version at startup and each flush with per-type counts and metric breakdowns.                         |
 
 Counters with identical metric+labels are summed within each batch. Unique events with the same unique ID and identical
-metric+labels are deduplicated within each built batch (no cross-batch dedup guarantee). Values are forwarded as raw samples.
+metric+labels are deduplicated within each built batch (no cross-batch dedup guarantee). Values are forwarded as raw samples
+up to the per-client 20,000-per-second limit.
 
 ## Agent core metrics
 

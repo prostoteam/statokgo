@@ -15,7 +15,7 @@ The client must prioritize safety, bounded resource usage, and efficient transpo
   - Periodic flush interval
 - Support optional local aggregation:
   - **Counters**: aggregate identical (metric + labels) events within a batch.
-  - **Values**: forward raw events until DDSketch-based local aggregation is implemented.
+  - **Values**: forward raw events until DDSketch-based local aggregation is implemented, subject to a hard-coded global limit of 20,000 value events per client per wall-clock second. The first 20,000 values in a second are forwarded; later values are silently ignored before queueing.
 
 ### Safety & Performance Requirements
 
